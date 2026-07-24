@@ -7,7 +7,8 @@
 - `LogLevel`：日志级别字面量联合 `'debug' | 'info' | 'warn' | 'error'`，对应后端 `model.Log.Level`。
 - `LogItem`：单条日志，对应后端 `model.Log`（`id / timestamp / level / event / method / path / status / duration_ms / client_ip / request_id / api_key_id / username / message / created_at`）。
 - `LogListResponse`：`GET /admin/logs` 的响应 `data`，含 `items / total / page / page_size`。
-- `HistogramBucket`：直方图单日计数（`date` 形如 `YYYY-MM-DD` / `count`）。
+- `HistogramBucket`：直方图单日计数（`date` 形如 `YYYY-MM-DD` / `count`，可选 `keys` 仅仪表盘图片趋势携带）。
+- `KeyCount`：某日某来源的新增图片计数（`name` 密钥标签，后台直传为 `"admin"` / `count`），供仪表盘 tooltip 按来源拆分。
 - `HistogramResponse`：`GET /admin/logs/histogram` 的响应 `data`，含 `buckets / total`。
 - `PurgeRequest`：清理日志请求体（账号密码二次确认），含 `username / password`。
 - `ListLogsParams`：`list()` 的入参（`level / event / method / statusClass / keyword / start / end / page / pageSize`）。

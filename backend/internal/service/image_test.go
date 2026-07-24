@@ -113,6 +113,42 @@ func (m *memImageDAO) CountByRange(_ context.Context, start, end time.Time) (int
 	return n, nil
 }
 
+// CountByRangeGrouped 统计 [start, end) 内按 key_id 分组的新增图片数（仪表盘按来源拆分用）。
+// 与 CountByRange 同样的左闭右开区间判定；nil KeyID 归入 admin（KeyID 指针为 nil）。
+func (m *memImageDAO) CountByRangeGrouped(_ context.Context, start, end time.Time) ([]model.KeyGroupCount, error) {
+	type agg struct {
+		keyID *int
+		count int
+	}
+	idx := map[int]int{} // keyID 值（0=admin 哨兵）-> groups 下标
+	var groups []agg
+	for _, img := range m.byID {
+		if img.CreatedAt.Before(start) || !img.CreatedAt.Before(end) {
+			continue
+		}
+		id := 0
+		if img.KeyID != nil {
+			id = *img.KeyID
+		}
+		if pos, ok := idx[id]; ok {
+			groups[pos].count++
+		} else {
+			idx[id] = len(groups)
+			var kid *int
+			if id != 0 {
+				v := id
+				kid = &v
+			}
+			groups = append(groups, agg{keyID: kid, count: 1})
+		}
+	}
+	out := make([]model.KeyGroupCount, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, model.KeyGroupCount{KeyID: g.keyID, Count: g.count})
+	}
+	return out, nil
+}
+
 // 编译期断言：memImageDAO 满足 dao.ImageDAO。
 var _ dao.ImageDAO = (*memImageDAO)(nil)
 

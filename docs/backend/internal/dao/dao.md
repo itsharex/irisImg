@@ -18,6 +18,7 @@
 | `Count(ctx) (int64, error)` | 图片总量（无过滤），供仪表盘统计 |
 | `TotalSize(ctx) (int64, error)` | 全部图片 `size` 之和（字节）；空表 SUM 返回 NULL，兜底为 0 |
 | `CountByRange(ctx, start, end time.Time) (int64, error)` | 统计 `[start, end)`（按 `created_at`）新增图片数，供仪表盘按日聚合 |
+| `CountByRangeGrouped(ctx, start, end time.Time) ([]model.KeyGroupCount, error)` | 统计 `[start, end)`（按 `created_at`）新增图片数，按 `key_id` 分组返回（`KeyID=nil` 为后台直传）；返回值未解析名称，由 service 解析为 `KeyCount`，供仪表盘 tooltip 按来源拆分 |
 
 ## 错误
 

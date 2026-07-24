@@ -85,15 +85,15 @@ func TestDashboardService_Overview(t *testing.T) {
 	dayBefore := today.AddDate(0, 0, -2)
 
 	mem := newMemDAO()
-	seedImage(mem, 1, "h1", 100, today) // 今天
-	seedImage(mem, 2, "h2", 200, yesterday)
-	seedImage(mem, 3, "h3", 300, dayBefore)
-	seedImage(mem, 4, "h4", 400, today) // 今天第二张
+	seedImage(mem, 1, "h1", 100, today)               // 今天 - admin 直传
+	seedImageWithKey(mem, 2, "h2", 200, yesterday, 2) // 昨天 - 经 key2(beta)
+	seedImage(mem, 3, "h3", 300, dayBefore)           // 前天 - admin 直传
+	seedImageWithKey(mem, 4, "h4", 400, today, 1)     // 今天第二张 - 经 key1(alpha)
 
 	keyDAO := &memAPIKeyDAO{keys: []*model.APIKey{
-		{ID: 1, Revoked: false},
-		{ID: 2, Revoked: false},
-		{ID: 3, Revoked: true},
+		{ID: 1, Name: "alpha", Revoked: false},
+		{ID: 2, Name: "beta", Revoked: false},
+		{ID: 3, Name: "gamma", Revoked: true},
 	}}
 	logDAO := &memLogDAO{count: 9999}
 
@@ -146,6 +146,45 @@ func TestDashboardService_Overview(t *testing.T) {
 	if got.Days != 30 {
 		t.Fatalf("days = %d, want 30", got.Days)
 	}
+
+	// 按来源拆分（tooltip 用）：今天 = admin + alpha（各 1），昨天 = beta，前天 = admin。
+	todayKeys := got.RecentUploadTrend[29].Keys
+	if len(todayKeys) != 2 || !hasKeyCount(todayKeys, "admin", 1) || !hasKeyCount(todayKeys, "alpha", 1) {
+		t.Fatalf("today keys = %+v, want admin=1 and alpha=1", todayKeys)
+	}
+	yesterdayKeys := got.RecentUploadTrend[28].Keys
+	if len(yesterdayKeys) != 1 || !hasKeyCount(yesterdayKeys, "beta", 1) {
+		t.Fatalf("yesterday keys = %+v, want beta=1", yesterdayKeys)
+	}
+	dayBeforeKeys := got.RecentUploadTrend[27].Keys
+	if len(dayBeforeKeys) != 1 || !hasKeyCount(dayBeforeKeys, "admin", 1) {
+		t.Fatalf("day-before keys = %+v, want admin=1", dayBeforeKeys)
+	}
+	// 无上传的日子 Keys 为空（序列化时 omitempty 省略）。
+	if len(got.RecentUploadTrend[0].Keys) != 0 {
+		t.Fatalf("earliest day keys = %+v, want empty", got.RecentUploadTrend[0].Keys)
+	}
+}
+
+// seedImageWithKey 同 seedImage，但关联指定密钥 ID（模拟经 API Key 上传）。
+func seedImageWithKey(mem *memImageDAO, id int, hash string, size int64, createdAt time.Time, keyID int) {
+	kid := keyID
+	img := &model.Image{ID: id, Hash: hash, Size: size, CreatedAt: createdAt, KeyID: &kid}
+	mem.byID[id] = img
+	mem.byHash[hash] = img
+	if id > mem.nextID {
+		mem.nextID = id
+	}
+}
+
+// hasKeyCount 报告 ks 是否包含指定 {name, count} 项（不依赖顺序，用于断言降序排序后的成员）。
+func hasKeyCount(ks []model.KeyCount, name string, count int) bool {
+	for _, k := range ks {
+		if k.Name == name && k.Count == count {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDashboardService_DefaultDays(t *testing.T) {

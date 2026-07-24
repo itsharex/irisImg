@@ -9,7 +9,7 @@
 
 - **单接口聚合**：[`GET /admin/dashboard`](./internal/api/dashboard.md) 一次性返回 [`model.DashboardOverview`](./internal/model/dashboard.md)，避免前端发 4-5 个请求拼装。遵循现有 `api -> service -> dao -> model` 分层。
 - **只读、无副作用**：仪表盘不写数据、不记业务事件，因此无需 HTTPSOnly 与密码二次确认，仅挂 JWT 受保护组（与 `/system/config` 同级）。
-- **复用日志直方图组件**：近 N 天上传趋势复用前端 [`LogsHistogram`](../frontend/components/logs/LogsHistogram.md)（纯 SVG，零第三方依赖），后端趋势单元复用 [`model.DailyCount`](./internal/model/log.md)，结构与日志直方图 buckets 一致。
+- **复用日志直方图组件**：近 N 天上传趋势复用前端 [`LogsHistogram`](../frontend/components/logs/LogsHistogram.md)（纯 SVG，零第三方依赖），后端趋势单元用 [`model.DashboardTrendDay`](./internal/model/dashboard.md)（在 `DailyCount` 基础上追加按来源拆分的 `Keys`），结构与日志直方图 buckets 兼容；hover 浮动卡据此展示「当日每个 key 上传数」，后台直传显示 admin。
 
 参与的代码文件：
 
@@ -18,7 +18,7 @@
 | 控制器 | `internal/api/dashboard.go` |
 | 业务逻辑 | `internal/service/dashboard.go` |
 | DTO | `internal/model/dashboard.go` |
-| DAO 接口扩展 | `internal/dao/dao.go`（`ImageDAO.Count/TotalSize/CountByRange`、`LogDAO.Count`） |
+| DAO 接口扩展 | `internal/dao/dao.go`（`ImageDAO.Count/TotalSize/CountByRange/CountByRangeGrouped`、`LogDAO.Count`） |
 | DAO 实现 | `internal/dao/entdao/image.go`、`internal/dao/entdao/log.go` |
 | 路由装配 | `internal/router/router.go` |
 | 前端页面 | `frontend/app/pages/dashboard.vue` |
@@ -41,10 +41,10 @@
   "apikeys_active": 2,
   "apikeys_revoked": 1,
   "logs_total": 9999,
-  "recent_upload_trend": [           // 近 30 天，升序、缺日补零
+  "recent_upload_trend": [           // 近 30 天，升序、缺日补零；keys 为按来源拆分（无上传则省略）
     { "date": "2026-06-17", "count": 0 },
     // ...
-    { "date": "2026-07-16", "count": 5 }
+    { "date": "2026-07-16", "count": 5, "keys": [ { "name": "alpha", "count": 3 }, { "name": "admin", "count": 2 } ] }
   ],
   "recent_upload_total": 42,
   "days": 30
@@ -59,7 +59,7 @@
 | 存储占用 | `ImageDAO.TotalSize` | DB `SUM(size)`，空表兜底 0（见下「空表 NULL」） |
 | APIkey 数 | `APIKeyDAO.List` 内存分桶 | 总数 / 有效（未吊销）/ 已吊销；已删除为物理删除不可统计 |
 | 日志总量 | `LogDAO.Count` | 全表 count |
-| 近 N 天新增趋势 | `ImageDAO.CountByRange` 按日循环 | 以 `Image.CreatedAt` 过滤，左闭右开，缺日补零 |
+| 近 N 天新增趋势 | `ImageDAO.CountByRangeGrouped` 按日循环 | 以 `Image.CreatedAt` 过滤，左闭右开，缺日补零；每日按 `key_id` 分组并解析标签（后台直传为 admin），供 tooltip 按来源拆分 |
 
 ### 为什么存储大小用 DB SUM 而非文件系统遍历
 
@@ -78,9 +78,9 @@
             └─ api.DashboardAPI.Overview
                  └─ service.DashboardService.Overview(ctx, 30)
                       ├─ imageDAO.Count / TotalSize
-                      ├─ apiKeyDAO.List -> 内存按 Revoked 分桶
+                      ├─ apiKeyDAO.List -> 内存按 Revoked 分桶 + 构建 id->name 映射
                       ├─ logDAO.Count
-                      └─ uploadTrend(30) -> 循环 imageDAO.CountByRange(按日)
+                      └─ uploadTrend(30, nameByID) -> 循环 imageDAO.CountByRangeGrouped(按日按 key)
 ```
 
 ## 5. 前端结构
@@ -94,7 +94,7 @@
 
 - **时区对齐（高）**：`ImageDAO.CountByRange` 谓词用 `start.In(time.Local)` / `end.In(time.Local)` 对齐服务器本地时区。modernc 驱动按 `t.String()` 文本绑定 `time.Time`、SQLite 按字节序比较，存储用 `time.Now()`（本地时区），查询参数须同一时区偏移才能保证字节序与时刻序一致（与日志链路同一陷阱，见 [`LOG.md`](./LOG.md)）。
 - **空表 SUM 返回 NULL（中）**：`TotalSize` 用 `ent.Sum` + `ent.As` 别名 `total`，扫描到 `[]struct{ Total *int64 \`sql:"total"\` }`，`*int64` 直接承接空表 SUM 返回的 NULL（兜底返回 0）。ent 的 `sql.ScanSlice` 只接受 slice 目标、且 NULL 不能写入 `int64`，故用 slice of struct + `*int64` 字段（而非单个 struct 或 `[]int64`）。这样无需「先 Count 判空」，规避 Count 与 SUM 之间的 TOCTOU 500 路径（并发清空图片表会使 SUM 返回 NULL）。已由 `entdao` 真实 SQLite 测试覆盖（含空表 NULL 用例）。
-- **聚合性能（低）**：`Overview` 含 30 天循环 `CountByRange`（30 次 count 查询）。SQLite 本地首版足够快；数据量增大后可对结果加 30-60s 内存缓存，或改为单条 `GROUP BY date(created_at)` 聚合（需在 `ImageDAO` 新增方法）。
+- **聚合性能（低）**：`Overview` 含 30 天循环 `CountByRangeGrouped`（30 次 `Select(key_id)` + 内存分组查询）。SQLite 本地首版足够快；数据量增大后可对结果加 30-60s 内存缓存，或改为单条 `GROUP BY date(created_at), key_id` 聚合。
 - **APIkey 已删除不可统计（低）**：`Delete` 为物理删除，UI 仅区分有效 / 已吊销并在副标题标口径。
 
 ## 7. 示例

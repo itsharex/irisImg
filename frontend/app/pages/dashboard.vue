@@ -91,6 +91,7 @@
         :empty-text="`近 ${days} 天暂无新增图片`"
         :title-text="`近 ${days} 天新增图片趋势`"
         :legend-text="'新增图片'"
+        :unit="'张'"
         @retry="fetchOverview"
       />
     </div>

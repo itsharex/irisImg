@@ -356,3 +356,79 @@ func TestImageDAO_ListAndDeleteByKeyID(t *testing.T) {
 		t.Fatalf("expected key2 still 1, got %d (err %v)", len(left), err)
 	}
 }
+
+// TestImageDAO_CountByRangeGrouped 覆盖仪表盘按日按来源聚合：
+//   - admin（nil KeyID）与各 key 分组正确；
+//   - 区间外的记录被排除；
+//   - 空区间返回空切片。
+func TestImageDAO_CountByRangeGrouped(t *testing.T) {
+	d := newTestDAO(t)
+	ctx := context.Background()
+	impl := d.(*imageDAO)
+
+	// 两把密钥（image.key_id 外键依赖）。
+	for _, name := range []string{"k1", "k2"} {
+		if _, err := impl.client.ApiKey.Create().
+			SetName(name).
+			SetKeyHash("hash-" + name).
+			SetPrefix("pfx").
+			SetScope(apikey.ScopeReadwrite).
+			Save(ctx); err != nil {
+			t.Fatalf("create key %s: %v", name, err)
+		}
+	}
+
+	now := time.Now()
+	loc := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, loc)
+	yesterday := today.AddDate(0, 0, -1)
+
+	mk := func(hash string, keyID *int, ts time.Time) {
+		if _, err := impl.client.Image.Create().
+			SetFilename(hash + ".png").
+			SetStoredPath("p/" + hash).
+			SetURL("/i/" + hash).
+			SetSize(10).
+			SetMimeType("image/png").
+			SetWidth(1).
+			SetHeight(1).
+			SetHash(hash).
+			SetNillableKeyID(keyID).
+			SetCreatedAt(ts).
+			Save(ctx); err != nil {
+			t.Fatalf("create %s: %v", hash, err)
+		}
+	}
+	key1, key2 := 1, 2
+	mk("a1", nil, today)        // admin 今天
+	mk("a2", nil, today)        // admin 今天
+	mk("k1a", &key1, today)     // key1 今天
+	mk("k2a", &key2, today)     // key2 今天
+	mk("a3", nil, yesterday)    // admin 昨天（应排除）
+	mk("k1b", &key1, yesterday) // key1 昨天（应排除）
+
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	got, err := d.CountByRangeGrouped(ctx, dayStart, dayEnd)
+	if err != nil {
+		t.Fatalf("CountByRangeGrouped today: %v", err)
+	}
+
+	// 期望：admin=2、key1=1、key2=1，共 3 组（用 0 作 admin 哨兵）。
+	gotMap := map[int]int{}
+	for _, g := range got {
+		id := 0
+		if g.KeyID != nil {
+			id = *g.KeyID
+		}
+		gotMap[id] = g.Count
+	}
+	if len(got) != 3 || gotMap[0] != 2 || gotMap[1] != 1 || gotMap[2] != 1 {
+		t.Fatalf("today groups = %+v (map=%v), want admin=2 key1=1 key2=1", got, gotMap)
+	}
+
+	// 未来区间应返回空。
+	if g, err := d.CountByRangeGrouped(ctx, dayEnd, dayEnd.AddDate(0, 0, 1)); err != nil || len(g) != 0 {
+		t.Fatalf("future groups = %+v err %v, want empty", g, err)
+	}
+}

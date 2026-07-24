@@ -8,7 +8,7 @@
   - `images_total: number`、`storage_bytes: number`
   - `apikeys_total / apikeys_active / apikeys_revoked: number`
   - `logs_total: number`
-  - `recent_upload_trend: HistogramBucket[]`（复用 [`useLogs`](./useLogs.md) 的 `HistogramBucket`，结构 `{date, count}`）
+  - `recent_upload_trend: HistogramBucket[]`（复用 [`useLogs`](./useLogs.md) 的 `HistogramBucket`，结构 `{date, count, keys?}`；`keys` 为按来源拆分，供仪表盘 tooltip 展示「当日每个 key 上传数」，后台直传显示 admin）
   - `recent_upload_total: number`、`days: number`
 
 ## 导出函数

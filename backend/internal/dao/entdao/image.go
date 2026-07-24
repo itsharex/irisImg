@@ -150,6 +150,43 @@ func (d *imageDAO) CountByRange(ctx context.Context, start, end time.Time) (int6
 	return int64(n), nil
 }
 
+// CountByRangeGrouped 统计 [start, end) 时间区间（按 created_at）新增图片数，按 key_id 分组返回，
+// 供仪表盘按日按来源聚合（tooltip 展示「当日每个 key 上传数」）。
+//
+// 与 CountByRange 同构的时区对齐谓词；用 Select(image.FieldKeyID) 只投影 KeyID 字段，
+// 内存按 KeyID 分组——避免 Ent 对可空字段 GroupBy 时 NULL 分组值的不确定性
+// （GroupBy 返回的 Group 对 NULL 的表达依驱动而异，直接读 *int 更稳妥）。
+// key_id 自增从 1 开始，用 0 作 admin 哨兵（nil KeyID -> 0），与真实密钥 ID 无冲突。
+// 返回值未解析名称，由 service 据 apiKeyDAO.List 解析为 model.KeyCount。
+func (d *imageDAO) CountByRangeGrouped(ctx context.Context, start, end time.Time) ([]model.KeyGroupCount, error) {
+	rows, err := d.client.Image.Query().
+		Where(image.CreatedAtGTE(start.In(time.Local)), image.CreatedAtLT(end.In(time.Local))).
+		Select(image.FieldKeyID).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// keyID（0 = admin 哨兵）-> 当日计数
+	groups := make(map[int]int)
+	for _, r := range rows {
+		id := 0 // admin 哨兵
+		if r.KeyID != nil {
+			id = *r.KeyID
+		}
+		groups[id]++
+	}
+	out := make([]model.KeyGroupCount, 0, len(groups))
+	for id, c := range groups {
+		var kid *int
+		if id != 0 {
+			v := id
+			kid = &v
+		}
+		out = append(out, model.KeyGroupCount{KeyID: kid, Count: c})
+	}
+	return out, nil
+}
+
 func (d *imageDAO) Delete(ctx context.Context, id int) error {
 	if err := d.client.Image.DeleteOneID(id).Exec(ctx); err != nil {
 		return wrapErr(err)

@@ -36,6 +36,11 @@ type ImageDAO interface {
 	TotalSize(ctx context.Context) (int64, error)
 	// CountByRange 统计 [start, end) 时间区间（按 created_at）新增的图片数，供仪表盘按日聚合。
 	CountByRange(ctx context.Context, start, end time.Time) (int64, error)
+	// CountByRangeGrouped 统计 [start, end) 时间区间（按 created_at）新增图片数，按 key_id 分组返回，
+	// 供仪表盘按日按来源聚合（tooltip 展示「当日每个 key 上传数」）。
+	// KeyID 为 nil 表示后台 JWT 直传（展示为 admin）；返回值未解析密钥名称，由 service 据
+	// apiKeyDAO.List 构建 id->name 映射后解析为 model.KeyCount。
+	CountByRangeGrouped(ctx context.Context, start, end time.Time) ([]model.KeyGroupCount, error)
 }
 
 // APIKeyDAO 抽象 API 密钥的持久化操作。

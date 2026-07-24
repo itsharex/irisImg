@@ -29,10 +29,20 @@ export interface LogListResponse {
   page_size: number
 }
 
+/** 直方图单日某来源（密钥 / 后台直传）的新增图片计数，仪表盘图片趋势 tooltip 用。 */
+export interface KeyCount {
+  /** 来源名称：密钥标签；后台 JWT 直传统一为 "admin"。 */
+  name: string
+  /** 该来源当日新增图片数。 */
+  count: number
+}
+
 /** 直方图单日计数。 */
 export interface HistogramBucket {
   date: string // YYYY-MM-DD
   count: number
+  /** 当日按来源拆分的新增图片数；仅仪表盘图片趋势携带，日志直方图不携带（tooltip 不渲染来源明细）。 */
+  keys?: KeyCount[]
 }
 
 /** 直方图响应，对应 GET /admin/logs/histogram 的 data。 */
