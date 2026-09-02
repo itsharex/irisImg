@@ -84,21 +84,38 @@
           <h2 class="text-sm font-semibold text-gray-900">近 14 天日志量</h2>
           <p class="mt-0.5 text-xs text-gray-500">共 {{ histTotal }} 条</p>
         </div>
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
-          @click="purgeOpen = true"
-        >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-            />
-          </svg>
-          清理日志
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
+            @click="purgeOpen = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+              />
+            </svg>
+            清理全部日志
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
+            @click="purgeGetOpen = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+              />
+            </svg>
+            清理GET日志
+          </button>
+        </div>
       </div>
       <LogsHistogram :buckets="buckets" :total="histTotal" :loading="histLoading" :error="histError" @retry="fetchHistogram" />
     </div>
@@ -133,8 +150,9 @@
       <LogsTable :logs="logs" :loading="loading" :error="error" @retry="fetchLogs" />
     </div>
 
-    <!-- 清理日志二次确认弹窗 -->
-    <LogsPurgeDialog :open="purgeOpen" @close="purgeOpen = false" @done="onPurged" />
+    <!-- 清理日志二次确认弹窗（全部 / 仅 info 级 GET） -->
+    <LogsPurgeDialog :open="purgeOpen" @close="purgeOpen = false" @done="onPurgedAll" />
+    <LogsPurgeDialog scope="get" :open="purgeGetOpen" @close="purgeGetOpen = false" @done="onPurgedGet" />
   </div>
 </template>
 
@@ -170,8 +188,9 @@ const histTotal = ref(0)
 const histLoading = ref(false)
 const histError = ref<string | null>(null)
 
-// 清理弹窗
+// 清理弹窗（全部 / 仅 info 级 GET）
 const purgeOpen = ref(false)
+const purgeGetOpen = ref(false)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
@@ -194,7 +213,8 @@ const eventOptions = [
   { value: 'apikey.delete', label: '删除密钥' },
   { value: 'auth.login_success', label: '登录成功' },
   { value: 'auth.login_failed', label: '登录失败' },
-  { value: 'log.clear', label: '清理日志' },
+  { value: 'log.clear', label: '清理全部日志' },
+  { value: 'log.clear_get', label: '清理GET日志' },
   { value: 'panic', label: 'Panic' },
 ]
 
@@ -285,9 +305,18 @@ function goPage(p: number) {
   fetchLogs()
 }
 
-function onPurged() {
+function onPurgedAll() {
   purgeOpen.value = false
-  // 清理后直方图与列表都需刷新（列表回到第 1 页，此时通常只剩 log.clear 审计事件）。
+  refreshAfterPurge()
+}
+
+function onPurgedGet() {
+  purgeGetOpen.value = false
+  refreshAfterPurge()
+}
+
+// 清理后直方图与列表都需刷新（列表回到第 1 页，并能看到补记的 log.clear / log.clear_get 审计事件）。
+function refreshAfterPurge() {
   fetchHistogram()
   page.value = 1
   fetchLogs()

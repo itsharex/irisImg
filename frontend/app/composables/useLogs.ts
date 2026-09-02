@@ -55,6 +55,8 @@ export interface HistogramResponse {
 export interface PurgeRequest {
   username: string
   password: string
+  /** 清理范围：'all' 清空全部（默认，可省略）；'get' 仅清 info 级 GET 请求日志。 */
+  scope?: 'all' | 'get'
 }
 
 export interface ListLogsParams {
@@ -99,7 +101,7 @@ export function useLogs() {
     return get<HistogramResponse>('/admin/logs/histogram')
   }
 
-  /** 清理全部日志，返回被删除的条数。 */
+  /** 清理日志（scope 随 body 传递：'all' 全部 / 'get' 仅 info 级 GET），返回被删除的条数。 */
   async function purge(creds: PurgeRequest): Promise<{ deleted: number }> {
     return api<{ deleted: number }>('/admin/logs', { method: 'DELETE', body: creds })
   }

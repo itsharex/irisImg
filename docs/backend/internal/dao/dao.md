@@ -54,6 +54,7 @@
 | `CountByRange(ctx, start, end time.Time) (int, error)` | 统计 `[start, end)` 时间区间的日志条数，供直方图按日聚合 |
 | `Count(ctx) (int64, error)` | 日志总量，供仪表盘统计 |
 | `ClearAll(ctx) (int64, error)` | 清空全部日志，返回实际删除条数 |
+| `ClearInfoGet(ctx) (int64, error)` | 删除全部 info 级别且 HTTP 方法为 GET 的日志，返回实际删除条数 |
 
 实现见 [`entdao/log.go`](./entdao/log.md)。特性级说明见 [`LOG.md`](../../LOG.md)。
 
@@ -61,4 +62,4 @@
 
 - 实现：[`internal/dao/entdao`](./entdao/db.md)
 - 注入：`cmd/server/main.go` 构造实现后通过 `router.New` 注入（见 [`cmd/server.md`](../../cmd/server.md)、[`router.md`](../router/router.md)）。
-- 日志链路：`LogDAO` 由 `LogService` 持有，业务层只调用 `LogService` 的记录接口，实际写入由后台 flusher 异步批量调用 `BatchCreate` 完成；日志中心查询 / 直方图 / 清理同样经 `LogService` 调用 `List` / `CountByRange` / `ClearAll`。
+- 日志链路：`LogDAO` 由 `LogService` 持有，业务层只调用 `LogService` 的记录接口，实际写入由后台 flusher 异步批量调用 `BatchCreate` 完成；日志中心查询 / 直方图 / 清理同样经 `LogService` 调用 `List` / `CountByRange` / `ClearAll` / `ClearInfoGet`。

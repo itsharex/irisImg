@@ -20,6 +20,7 @@
 | `CountByRange` | `Where(accesslog.TimestampGTE(start), accesslog.TimestampLT(end)).Count(ctx)`，统计 [start, end) 区间条数，供直方图按日聚合 |
 | `Count` | `AccessLog.Query().Count(ctx)` 返回日志总量（`int` -> `int64`），供仪表盘统计 |
 | `ClearAll` | `AccessLog.Delete().Exec(ctx)` 清空全部日志，返回删除条数（`int64`） |
+| `ClearInfoGet` | 复用 `buildLogPreds(model.LogQuery{Level: "info", Method: "GET"})` 组装 Level+Method 谓词后 `AccessLog.Delete().Where(preds...).Exec(ctx)` 条件删除，返回删除条数；审计 / 业务事件 method 为 NULL，不会被命中 |
 
 ## 辅助函数
 
@@ -46,7 +47,7 @@
 
 ## 错误与转换
 
-- 与同包 [`image.go`](image.md) / [`apikey.go`](apikey.md) 不同，本文件不使用 `wrapErr`：日志查询无「不存在」语义，`Create` / `BatchCreate` / `List` / `CountByRange` / `Count` / `ClearAll` 直接透传底层 Ent 错误。
+- 与同包 [`image.go`](image.md) / [`apikey.go`](apikey.md) 不同，本文件不使用 `wrapErr`：日志查询无「不存在」语义，`Create` / `BatchCreate` / `List` / `CountByRange` / `Count` / `ClearAll` / `ClearInfoGet` 直接透传底层 Ent 错误。
 - `toLogModel` 见上节，承担 Ent -> model 的字段映射。
 
 ## 调用关系

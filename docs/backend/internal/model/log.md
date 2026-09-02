@@ -30,7 +30,8 @@ const (
     EventAPIKeyDelete  = "apikey.delete"       // 密钥删除
     EventAuthLoginOK   = "auth.login_success"  // 登录成功
     EventAuthLoginFail = "auth.login_failed"   // 登录失败
-    EventLogClear      = "log.clear"           // 日志清理
+    EventLogClear      = "log.clear"           // 日志清理（全量清空）
+    EventLogClearGet   = "log.clear_get"       // 日志清理（仅 info 级 GET 请求日志）
     EventPanic         = "panic"               // panic 恢复记录
 )
 ```
@@ -90,7 +91,12 @@ const (
 
 ### `DestructiveRequest`
 
-清理日志等敏感操作的请求体，含 `Username` / `Password`（均 `binding:"required"`）。复用与 API 密钥吊销 / 删除相同的二次确认机制：后端用 `subtle.ConstantTimeCompare` 校验，**失败返回 403（而非 401）**，避免触发前端全局登出。作为 JWT 登录态之上的二次确认。
+清理日志等敏感操作的请求体，含 `Username` / `Password`（均 `binding:"required"`）与可选 `Scope`。复用与 API 密钥吊销 / 删除相同的二次确认机制：后端用 `subtle.ConstantTimeCompare` 校验，**失败返回 403（而非 401）**，避免触发前端全局登出。作为 JWT 登录态之上的二次确认。
+
+| 字段 | 说明 |
+|------|------|
+| `Username` / `Password` | 二次确认凭据，`binding:"required"` |
+| `Scope` | 清理范围：空 / `"all"` 清空全部（默认，向后兼容）；`"get"` 仅清 info 级 GET 请求日志。非法值由控制器返回 400 |
 
 ## 调用关系
 

@@ -111,10 +111,19 @@ type LogService struct {
 3. 经 `Record(model.NewEventLog(model.EventLogClear, model.LevelInfo, "cleared N logs", lc))` 异步补记审计。
 4. 因为审计是在清空**之后**入缓冲的，清空动作完成后日志中心**仍可见这条 `log.clear` 记录**。
 
+### `ClearInfoGet(ctx, lc model.LogContext) (int64, error)`
+
+删除全部 **info 级 GET 请求日志**并**补记一条 `log.clear_get` 审计事件**，流程与 `ClearAll` 完全一致：
+
+1. 先 `flushSync()` 同步排空在途缓冲并落库（同 `ClearAll` 的动机）。
+2. 同步调 [`dao.ClearInfoGet`](../dao/dao.md) 条件删除（谓词为 `Level = info AND method = 'GET'`），返回删除条数 `n`。
+3. 经 `Record(model.NewEventLog(model.EventLogClearGet, model.LevelInfo, "cleared N info GET logs", lc))` 异步补记审计。
+4. 审计事件本身 method 为 NULL，**不会被自己的删除条件命中**；warn/error 级、非 GET 方法与业务事件日志全部保留。
+
 ## 与其它包的关系
 
 ```
-api.LogAPI ──────────────► service.LogService ──► dao.LogDAO (List / Histogram / ClearAll 同步)
+api.LogAPI ──────────────► service.LogService ──► dao.LogDAO (List / Histogram / ClearAll / ClearInfoGet 同步)
 其它控制器 ──(LogRecorder)─►        │              └─► dao.BatchCreate (flushLoop 异步)
                                    ├─► pkg/logger (缓冲满 / 批量写失败告警)
                                    └─► flushLoop 协程 ──► dao.BatchCreate
@@ -122,8 +131,8 @@ router ──(NewLogService)──────────►│
                                    └─► Close() 须在 DB 关闭前调用
 ```
 
-- 写路径（`Record` / `ClearAll` 的审计）**异步**：经 `buf` 通道由 `flushLoop` 批量落库。
-- 读路径（`List` / `Histogram`）与 `ClearAll` 的删除**同步**：直接走 dao，结果立即可见。
+- 写路径（`Record` / `ClearAll` / `ClearInfoGet` 的审计）**异步**：经 `buf` 通道由 `flushLoop` 批量落库。
+- 读路径（`List` / `Histogram`）与 `ClearAll` / `ClearInfoGet` 的删除**同步**：直接走 dao，结果立即可见。
 - 控制器层细节见 [`../../api/log.md`](../../api/log.md)，dao 接口与实现见 [`../dao/dao.md`](../dao/dao.md)。
 
 ## 修改建议

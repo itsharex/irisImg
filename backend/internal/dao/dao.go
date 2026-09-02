@@ -83,4 +83,6 @@ type LogDAO interface {
 	Count(ctx context.Context) (int64, error)
 	// ClearAll 清空全部日志，返回删除条数。
 	ClearAll(ctx context.Context) (int64, error)
+	// ClearInfoGet 删除全部 info 级别且 HTTP 方法为 GET 的日志，返回删除条数。
+	ClearInfoGet(ctx context.Context) (int64, error)
 }

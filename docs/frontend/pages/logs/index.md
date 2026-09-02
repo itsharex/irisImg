@@ -6,7 +6,7 @@
 
 - 顶部标题 + 副标题（「查看访问与业务日志，支持多维筛选、按日趋势与清理」）。
 - 筛选栏（`grid` 响应式 2/3/4 列）：级别 / 事件 / 方法 / 状态 / 关键字 / 起始日期 / 结束日期 + 「查询」「重置」按钮。
-- 直方图卡片：标题「近 14 天日志量」+ 副文案「共 N 条」，右上角「清理日志」按钮（红色）打开 [`LogsPurgeDialog`](../../components/logs/LogsPurgeDialog.md) 二次确认弹窗；卡片主体渲染 [`LogsHistogram`](../../components/logs/LogsHistogram.md)，透传 `:error="histError"` 与 `@retry="fetchHistogram"`，与表格一致支持加载 / 错误（重试）/ 空 / 图表四态。
+- 直方图卡片：标题「近 14 天日志量」+ 副文案「共 N 条」，右上角并排两个红色清理按钮——「清理全部日志」（触发 `purgeOpen`，清空全部）与「清理GET日志」（触发 `purgeGetOpen`，仅清 info 级 GET 请求日志），分别打开 [`LogsPurgeDialog`](../../components/logs/LogsPurgeDialog.md) 二次确认弹窗（同一组件，`scope` prop 区分模式）；卡片主体渲染 [`LogsHistogram`](../../components/logs/LogsHistogram.md)，透传 `:error="histError"` 与 `@retry="fetchHistogram"`，与表格一致支持加载 / 错误（重试）/ 空 / 图表四态。
 - 分页日志栏：顶部「共 N 条」+ 上一页 / 下一页（`page / totalPages`），主体为 [`LogsTable`](../../components/logs/LogsTable.md)（四态：加载 / 错误（重试）/ 空 / 表格）。
 - 组件按目录前缀自动导入，但因文件名以目录名 `logs` 开头，Nuxt 会去重前缀：`components/logs/LogsHistogram.vue` -> `<LogsHistogram />`、`LogsTable.vue` -> `<LogsTable />`、`LogsPurgeDialog.vue` -> `<LogsPurgeDialog />`（注意不是 `LogsLogs*`）。
 
@@ -29,7 +29,8 @@
 | 直方图 | `histTotal` | `ref<number>` | 直方图区间合计。 |
 | 直方图 | `histLoading` | `ref<boolean>` | 直方图加载态。 |
 | 直方图 | `histError` | `ref<string \| null>` | 直方图错误文案，非空时透传给直方图错误态。 |
-| 弹窗 | `purgeOpen` | `ref<boolean>` | 清理日志弹窗显隐。 |
+| 弹窗 | `purgeOpen` | `ref<boolean>` | 「清理全部日志」弹窗显隐（默认 scope）。 |
+| 弹窗 | `purgeGetOpen` | `ref<boolean>` | 「清理GET日志」弹窗显隐（`scope="get"`）。 |
 | 派生 | `totalPages` | `computed<number>` | `Math.max(1, Math.ceil(total / PAGE_SIZE))`。 |
 | 常量 | `PAGE_SIZE` | `number` | `50`，每页条数。 |
 
@@ -43,7 +44,8 @@
 | `onSearch()` | `page` 重置为 1 后 `fetchLogs()`。 |
 | `onReset()` | 清空 `filters` 全部字段、`page` 重置为 1 后 `fetchLogs()`。 |
 | `goPage(p)` | 越界或与当前页相同时直接返回，否则 `page = p` 后 `fetchLogs()`。 |
-| `onPurged()` | 关闭弹窗，刷新直方图，`page` 重置为 1 后 `fetchLogs()`（清理后通常只剩 `log.clear` 审计事件）。 |
+| `onPurgedAll()` / `onPurgedGet()` | 各自关闭对应清理弹窗后调 `refreshAfterPurge()`。 |
+| `refreshAfterPurge()` | 刷新直方图，`page` 重置为 1 后 `fetchLogs()`（清理后列表回到第 1 页，可见补记的 `log.clear` / `log.clear_get` 审计事件）。 |
 
 ## 数据流
 
@@ -52,7 +54,7 @@
 - 分页「上一页 / 下一页」走 `goPage(page ∓ 1)`，受 `loading` 与页码边界双重禁用。
 - 表格 `@retry` 直接复用 `fetchLogs()` 重拉当前页。
 - 直方图 `@retry` 直接复用 `fetchHistogram()` 重拉趋势；`histError` 非空时直方图进入错误态并显示重试入口。
-- 清理弹窗 `@done` 走 `onPurged`：弹窗内部完成账号密码二次确认（`DELETE /admin/logs`）后通知父页刷新直方图与列表。
+- 清理弹窗 `@done` 走 `onPurgedAll` / `onPurgedGet`：弹窗内部完成账号密码二次确认（`DELETE /admin/logs`，`scope` 区分全部 / 仅 info 级 GET）后通知父页刷新直方图与列表。
 
 ## 与其它文件的关系
 
@@ -61,7 +63,7 @@ pages/logs/index.vue
   ├── composables/useLogs.ts                    -> list / histogram / purge（JWT 通道）
   ├── components/logs/LogsHistogram.vue         （<LogsHistogram />，近 14 天直方图）
   ├── components/logs/LogsTable.vue             （<LogsTable />，四态列表，emit retry）
-  └── components/logs/LogsPurgeDialog.vue       （<LogsPurgeDialog />，清理二次确认，emit done）
+  └── components/logs/LogsPurgeDialog.vue       （<LogsPurgeDialog />，清理二次确认，双实例：默认 / scope="get"，emit done）
 layouts/default.vue（承载侧边栏与用户区）
 ```
 

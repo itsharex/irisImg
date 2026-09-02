@@ -2,6 +2,7 @@ package entdao
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
@@ -122,6 +123,17 @@ func (d *logDAO) Count(ctx context.Context) (int64, error) {
 // ClearAll 清空全部日志，返回删除条数。
 func (d *logDAO) ClearAll(ctx context.Context) (int64, error) {
 	n, err := d.client.AccessLog.Delete().Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
+}
+
+// ClearInfoGet 删除全部 info 级 GET 请求日志，返回删除条数。
+// 复用 buildLogPreds 组装 Level+Method 谓词；审计 / 业务事件 method 为 NULL，不会被命中。
+func (d *logDAO) ClearInfoGet(ctx context.Context) (int64, error) {
+	preds := buildLogPreds(model.LogQuery{Level: model.LevelInfo, Method: http.MethodGet})
+	n, err := d.client.AccessLog.Delete().Where(preds...).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}

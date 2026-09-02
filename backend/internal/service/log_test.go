@@ -12,11 +12,13 @@ import (
 
 // mockLogDAO 是 dao.LogDAO 的可控测试替身。
 type mockLogDAO struct {
-	batched     [][]*model.Log
-	countByRng  func(start, end time.Time) int
-	cleared     int64
-	clearCalled bool
-	total       int64 // Count 返回值，供仪表盘等需要日志总量的场景
+	batched        [][]*model.Log
+	countByRng     func(start, end time.Time) int
+	cleared        int64
+	clearCalled    bool
+	clearedGet     int64
+	clearGetCalled bool
+	total          int64 // Count 返回值，供仪表盘等需要日志总量的场景
 }
 
 func (m *mockLogDAO) Create(_ context.Context, l *model.Log) (*model.Log, error) {
@@ -49,6 +51,11 @@ func (m *mockLogDAO) Count(_ context.Context) (int64, error) {
 func (m *mockLogDAO) ClearAll(_ context.Context) (int64, error) {
 	m.clearCalled = true
 	return m.cleared, nil
+}
+
+func (m *mockLogDAO) ClearInfoGet(_ context.Context) (int64, error) {
+	m.clearGetCalled = true
+	return m.clearedGet, nil
 }
 
 var _ dao.LogDAO = (*mockLogDAO)(nil)
@@ -130,6 +137,43 @@ func TestLogService_ClearAllRecordsEvent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("log.clear event not recorded")
+	}
+}
+
+// TestLogService_ClearInfoGetRecordsEvent 验证 ClearInfoGet 只调 dao 的条件删除，
+// 并在删除后补记 log.clear_get 审计事件（而非全量清理的 log.clear）。
+func TestLogService_ClearInfoGetRecordsEvent(t *testing.T) {
+	md := &mockLogDAO{clearedGet: 7}
+	s := NewLogService(md, logger.NewNop())
+
+	n, err := s.ClearInfoGet(context.Background(), model.LogContext{Username: "admin"})
+	if err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if n != 7 {
+		t.Fatalf("deleted=%d want 7", n)
+	}
+	if !md.clearGetCalled {
+		t.Fatalf("ClearInfoGet not called on dao")
+	}
+	if md.clearCalled {
+		t.Fatalf("ClearAll should not be called for scope=get")
+	}
+	s.Close() // flush 异步缓冲，含 log.clear_get 审计事件
+
+	found := false
+	for _, b := range md.batched {
+		for _, l := range b {
+			if l.Event == model.EventLogClearGet && l.Username == "admin" {
+				found = true
+			}
+			if l.Event == model.EventLogClear {
+				t.Fatalf("unexpected log.clear event for scope=get")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("log.clear_get event not recorded")
 	}
 }
 

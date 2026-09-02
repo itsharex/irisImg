@@ -196,3 +196,15 @@ func (s *LogService) ClearAll(ctx context.Context, lc model.LogContext) (int64, 
 	s.Record(model.NewEventLog(model.EventLogClear, model.LevelInfo, fmt.Sprintf("cleared %d logs", n), lc))
 	return n, nil
 }
+
+// ClearInfoGet 先同步 flush 在途日志、再删除全部 info 级 GET 请求日志，最后补记 log.clear_get 审计事件。
+// flush 时机与 ClearAll 相同；审计事件本身 method 为 NULL，不会被自己的删除条件命中。
+func (s *LogService) ClearInfoGet(ctx context.Context, lc model.LogContext) (int64, error) {
+	s.flushSync()
+	n, err := s.dao.ClearInfoGet(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s.Record(model.NewEventLog(model.EventLogClearGet, model.LevelInfo, fmt.Sprintf("cleared %d info GET logs", n), lc))
+	return n, nil
+}

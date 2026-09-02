@@ -1,5 +1,5 @@
 <template>
-  <UiBaseDialog :open="open" title="清理日志" content-class="max-w-xl" @close="emit('close')">
+  <UiBaseDialog :open="open" :title="title" content-class="max-w-xl" @close="emit('close')">
     <div class="space-y-5">
       <!-- 警告 -->
       <div class="flex items-start gap-2 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
@@ -11,7 +11,7 @@
             d="M12 9v3.75m-9-.75a9 9 0 1118 0 9 9 0 01-18 0zm9 3.75h.008v.008H12v-.008z"
           />
         </svg>
-        <p>此操作将清空全部历史日志，不可撤销。清理后会保留一条审计记录。</p>
+        <p>{{ warning }}</p>
       </div>
 
       <!-- 账号密码二次确认 -->
@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ open: boolean }>()
+const props = withDefaults(defineProps<{ open: boolean; scope?: 'all' | 'get' }>(), { scope: 'all' })
 const emit = defineEmits<{
   close: []
   done: []
@@ -77,6 +77,14 @@ const { user } = useAuth()
 const form = reactive({ username: '', password: '' })
 const serverError = ref('')
 const loading = ref(false)
+
+// 按 scope 切换标题与警告文案：'all' 清空全部；'get' 仅清 info 级 GET 请求日志。
+const title = computed(() => (props.scope === 'get' ? '清理GET日志' : '清理全部日志'))
+const warning = computed(() =>
+  props.scope === 'get'
+    ? '此操作将删除全部 info 级别的 GET 请求日志，不可撤销。清理后会保留一条审计记录。'
+    : '此操作将清空全部历史日志，不可撤销。清理后会保留一条审计记录。',
+)
 
 const canSubmit = computed(() => form.username.trim() !== '' && form.password !== '')
 
@@ -98,7 +106,7 @@ async function handleSubmit() {
   loading.value = true
   serverError.value = ''
   try {
-    await purge({ username: form.username.trim(), password: form.password })
+    await purge({ username: form.username.trim(), password: form.password, scope: props.scope })
     emit('done')
   } catch (err: unknown) {
     serverError.value = err instanceof Error ? err.message : '操作失败，请稍后重试'

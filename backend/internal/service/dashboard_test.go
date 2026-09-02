@@ -63,6 +63,9 @@ func (m *memLogDAO) CountByRange(_ context.Context, _, _ time.Time) (int, error)
 	return 0, errors.New("not used")
 }
 func (m *memLogDAO) ClearAll(_ context.Context) (int64, error) { return 0, errors.New("not used") }
+func (m *memLogDAO) ClearInfoGet(_ context.Context) (int64, error) {
+	return 0, errors.New("not used")
+}
 
 var _ dao.LogDAO = (*memLogDAO)(nil)
 

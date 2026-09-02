@@ -22,6 +22,7 @@ const (
 	EventAuthLoginOK   = "auth.login_success"
 	EventAuthLoginFail = "auth.login_failed"
 	EventLogClear      = "log.clear"
+	EventLogClearGet   = "log.clear_get"
 	EventPanic         = "panic"
 )
 
@@ -95,4 +96,6 @@ type DailyCount struct {
 type DestructiveRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	// Scope 清理范围：空 / "all" 清空全部（默认，向后兼容）；"get" 仅清 info 级 GET 请求日志。
+	Scope string `json:"scope,omitempty"`
 }

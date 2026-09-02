@@ -112,9 +112,10 @@ func (h *LogAPI) Histogram(c *gin.Context) {
 	})
 }
 
-// Clear 处理 DELETE /admin/logs，清空全部日志。
+// Clear 处理 DELETE /admin/logs，按 scope 清理日志。
 // 需在请求体中携带账号密码做二次确认；失败返回 403（非 401，避免触发前端全局登出）。
-// 清空后由 LogService 补记一条 log.clear 审计事件，故日志中心仍可见此次清理记录。
+// scope 取值：空 / "all" 清空全部（补记 log.clear 审计事件）；
+// "get" 仅清 info 级 GET 请求日志（补记 log.clear_get 审计事件），非法值返回 400。
 func (h *LogAPI) Clear(c *gin.Context) {
 	var req model.DestructiveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -126,7 +127,18 @@ func (h *LogAPI) Clear(c *gin.Context) {
 		return
 	}
 
-	n, err := h.svc.ClearAll(c.Request.Context(), middleware.LogContextFromGin(c))
+	var n int64
+	var err error
+	lc := middleware.LogContextFromGin(c)
+	switch req.Scope {
+	case "", "all":
+		n, err = h.svc.ClearAll(c.Request.Context(), lc)
+	case "get":
+		n, err = h.svc.ClearInfoGet(c.Request.Context(), lc)
+	default:
+		response.BadRequest(c, "无效的 scope")
+		return
+	}
 	if err != nil {
 		response.ServerError(c, "清理日志失败："+err.Error())
 		return

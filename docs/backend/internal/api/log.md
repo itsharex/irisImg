@@ -27,18 +27,21 @@
 
 ### `Clear(c *gin.Context)` -- `DELETE /admin/logs`
 
-清空全部日志。需在请求体携带 [`model.DestructiveRequest`](../model/log.md) 做密码二次确认：
+按 `scope` 清理日志。需在请求体携带 [`model.DestructiveRequest`](../model/log.md) 做密码二次确认：
 
-1. `c.ShouldBindJSON(&req)` 解析 `DestructiveRequest`；失败 -> `response.BadRequest`。
+1. `c.ShouldBindJSON(&req)` 解析 `DestructiveRequest`（含可选 `scope`）；失败 -> `response.BadRequest`。
 2. `authSvc.VerifyCredentials(req.Username, req.Password)` 失败 -> `response.Forbidden("用户名或密码错误")`（**403 `CodeForbidden` 而非 401**，避免触发前端 `useApi` 的全局登出）。
-3. 调 `svc.ClearAll(ctx, [`middleware.LogContextFromGin`](../middleware/requestid.md)`(c))`：err -> 500。清空后由 `LogService` 补记一条 `log.clear` 审计事件，故日志中心仍可见此次清理记录。
+3. 按 `req.Scope` 白名单分发（非法值 -> `response.BadRequest("无效的 scope")` 返回 **400**，风格对齐 `status_class`）：
+   - `""` / `"all"`：调 `svc.ClearAll(ctx, lc)` 清空全部，补记一条 `log.clear` 审计事件；
+   - `"get"`：调 `svc.ClearInfoGet(ctx, lc)` 仅删 info 级 GET 请求日志，补记一条 `log.clear_get` 审计事件。
+   其中 `lc` 为 [`middleware.LogContextFromGin`](../middleware/requestid.md)`(c)`；err -> 500。
 4. 成功返回 `gin.H{"deleted": n}`。
 
 ## 错误码约定
 
 | 场景 | HTTP | code |
 |------|------|------|
-| 入参非法（`page` / `page_size` / `status_class` / `start` / `end` / `api_key_id`） | 400 | 40000 |
+| 入参非法（`page` / `page_size` / `status_class` / `start` / `end` / `api_key_id` / `scope`） | 400 | 40000 |
 | 密码二次确认失败（Clear） | 403 | 40300 |
 | 内部错误（查询 / 直方图 / 清理失败） | 500 | 50000 |
 

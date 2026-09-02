@@ -166,3 +166,50 @@ func TestLogDAO_BatchCreateAndClearAll(t *testing.T) {
 		t.Fatalf("after clear total=%d want 0", total)
 	}
 }
+
+// TestLogDAO_ClearInfoGet 验证条件删除只命中 info 级 GET 日志：
+// warn/error 级、非 GET 方法、无 method 的业务事件均保留。
+func TestLogDAO_ClearInfoGet(t *testing.T) {
+	d := newTestLogDAO(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	mk := func(level, event, method string) *model.Log {
+		return &model.Log{Timestamp: now, Level: level, Event: event, Method: method}
+	}
+	for _, l := range []*model.Log{
+		mk(model.LevelInfo, model.EventHTTPRequest, "GET"),  // 命中
+		mk(model.LevelInfo, model.EventHTTPRequest, "POST"), // info 但非 GET，保留
+		mk(model.LevelWarn, model.EventHTTPRequest, "GET"),  // GET 但非 info，保留
+		mk(model.LevelError, model.EventPanic, ""),          // 无 method，保留
+		mk(model.LevelInfo, model.EventImageUpload, ""),     // 业务事件无 method，保留
+	} {
+		if _, err := d.Create(ctx, l); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	n, err := d.ClearInfoGet(ctx)
+	if err != nil {
+		t.Fatalf("clear info get: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted=%d want 1", n)
+	}
+
+	_, total, err := d.List(ctx, model.LogQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 4 {
+		t.Fatalf("after clear total=%d want 4", total)
+	}
+	// info+GET 组合应查不到了。
+	_, getTotal, err := d.List(ctx, model.LogQuery{Level: model.LevelInfo, Method: "GET", Limit: 10})
+	if err != nil {
+		t.Fatalf("list info get: %v", err)
+	}
+	if getTotal != 0 {
+		t.Fatalf("info GET residual=%d want 0", getTotal)
+	}
+}
