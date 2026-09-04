@@ -27,6 +27,11 @@ type ImageDAO interface {
 	ListByKeyID(ctx context.Context, keyID int) ([]*model.Image, error)
 	// Delete 按主键删除，未找到返回 ErrNotFound。
 	Delete(ctx context.Context, id int) error
+	// ListByIDs 按主键集合批量查询现存的图片记录（不存在的 ID 静默跳过），
+	// 供批量删除前取 StoredPath 做物理文件清理。
+	ListByIDs(ctx context.Context, ids []int) ([]*model.Image, error)
+	// DeleteByIDs 按主键集合批量删除图片记录，返回实际删除条数（不存在的 ID 静默跳过）。
+	DeleteByIDs(ctx context.Context, ids []int) (int, error)
 	// DeleteByKeyID 批量删除指定密钥关联的全部图片记录，返回实际删除条数。
 	DeleteByKeyID(ctx context.Context, keyID int) (int, error)
 	// Count 返回图片总量（无过滤），供仪表盘统计。

@@ -10,11 +10,14 @@
 
 ## 方法
 
-逐一实现 `ImageDAO` 接口：`Create` / `GetByID` / `GetByHash` / `List` / `ListByKeyID` / `Delete` / `DeleteByKeyID` / `Count` / `TotalSize` / `CountByRange` / `CountByRangeGrouped`。
+逐一实现 `ImageDAO` 接口：`Create` / `GetByID` / `GetByHash` / `List` / `ListByKeyID` / `ListByIDs` / `Delete` / `DeleteByIDs` / `DeleteByKeyID` / `Count` / `TotalSize` / `CountByRange` / `CountByRangeGrouped`。
 
 - `Create`：`SetNillableKeyID(img.KeyID)` 写入可空外键 `key_id`（记录图片由哪把 API 密钥添加；JWT 上传时为 nil 则不设置）。
 - `List(ctx, q model.ImageListQuery)`：按 `q.KeyID` 过滤（非 nil 时用 `image.KeyIDEQ`）、按 `q.Order` 排序（`"desc"` 倒序，否则升序）、`q.Offset`/`q.Limit` 为正才生效；总数与过滤条件一致，由私有 `countImages` 统计。
 - `ListByKeyID(ctx, keyID)`：`Query().Where(image.KeyIDEQ(keyID)).All(ctx)`，不分页，供删除密钥级联清理使用。
+- `ListByIDs(ctx, ids)`：`Query().Where(image.IDIn(ids...)).All(ctx)`，不存在的 ID 静默跳过，供批量删除前取 `StoredPath`。空切片防御：`len(ids)==0` 直接返回空 slice 不发起查询。
+- `Delete(ctx, id)`：`DeleteOneID(id).Exec(ctx)`，未找到经 `wrapErr` 转 `ErrNotFound`。
+- `DeleteByIDs(ctx, ids)`：`Delete().Where(image.IDIn(ids...)).Exec(ctx)` 一条 `IN` SQL 批量删除，返回实际删除条数（不存在的 ID 不计入）。空切片防御：返回 `0, nil`。
 - `DeleteByKeyID(ctx, keyID)`：`Delete().Where(image.KeyIDEQ(keyID)).Exec(ctx)`，返回删除条数。
 - `Count(ctx)`：`Image.Query().Count(ctx)` 返回图片总量，`int` -> `int64`，供仪表盘统计。
 - `TotalSize(ctx)`：`Aggregate(ent.As(ent.Sum(image.FieldSize), "total")).Scan(ctx, &v)`，`v` 为 `[]struct{ Total *int64 \`sql:"total"\` }`（ent 的 Scan 底层是 `sql.ScanSlice`，只接受 slice 目标，故用 slice 而非单个 struct）。空表时 SQL `SUM` 返回 NULL，`*int64` 接收为 nil，兜底返回 0。用 `*int64` 直接承接 NULL 而非「先 Count 判空」，规避 Count 与 SUM 间的 TOCTOU 窗口（并发清空表会使 SUM 返回 NULL，`[]int64` 无法承接而报错 500）并省去一次冗余 Count 往返。全项目首个聚合查询。
@@ -29,4 +32,4 @@
 
 ## 测试
 
-`image_test.go` 在 `t.TempDir()` 打开真实 SQLite（纯 Go 驱动、离线、无 CGO），覆盖创建/查询、未找到、列表分页与删除；`TestImageDAO_ListFilterAndOrder` 额外覆盖按 `key_id` 过滤、asc/desc 排序、offset/limit 分页（用 ent client 写入带明确 `created_at` 的记录以稳定排序，并预置 `api_key` 行满足外键约束）；`TestImageDAO_ListAndDeleteByKeyID` 覆盖 `ListByKeyID` 只返回指定密钥图片、`DeleteByKeyID` 批量删除且不影响其它密钥的图片；`TestImageDAO_CountByRangeGrouped` 覆盖按 `key_id` 分组（含 `nil` KeyID=admin）、区间外记录排除、空区间返回空切片。
+`image_test.go` 在 `t.TempDir()` 打开真实 SQLite（纯 Go 驱动、离线、无 CGO），覆盖创建/查询、未找到、列表分页与删除；`TestImageDAO_ListFilterAndOrder` 额外覆盖按 `key_id` 过滤、asc/desc 排序、offset/limit 分页（用 ent client 写入带明确 `created_at` 的记录以稳定排序，并预置 `api_key` 行满足外键约束）；`TestImageDAO_ListAndDeleteByKeyID` 覆盖 `ListByKeyID` 只返回指定密钥图片、`DeleteByKeyID` 批量删除且不影响其它密钥的图片；`TestImageDAO_ListAndDeleteByIDs` 覆盖 `ListByIDs` 跳过不存在的 ID、`DeleteByIDs` 计数与空 ids 防御；`TestImageDAO_CountByRangeGrouped` 覆盖按 `key_id` 分组（含 `nil` KeyID=admin）、区间外记录排除、空区间返回空切片。

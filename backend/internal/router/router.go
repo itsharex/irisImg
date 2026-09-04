@@ -56,7 +56,7 @@ func New(cfg *config.Config, imageDAO dao.ImageDAO, apiKeyDAO dao.APIKeyDAO, log
 	apiKeyAPI := api.NewAPIKeyAPI(apiKeySvc, authSvc, logSvc)
 
 	imageSvc := service.NewImageService(imageDAO, saver, cfg.Storage)
-	imageAPI := api.NewImageAPI(imageSvc, logSvc)
+	imageAPI := api.NewImageAPI(imageSvc, authSvc, logSvc)
 
 	logAPI := api.NewLogAPI(logSvc, authSvc)
 
@@ -94,11 +94,17 @@ func New(cfg *config.Config, imageDAO dao.ImageDAO, apiKeyDAO dao.APIKeyDAO, log
 				keys.DELETE("/:id", apiKeyAPI.Delete)
 			}
 
-			// 图片管理接口（后台）：受 JWT 保护，供内容中心拉取图片列表、后台直传上传。
+			// 图片管理接口（后台）：受 JWT 保护，供内容中心拉取图片列表、后台直传上传、批量删除。
 			// 与对外 /images（API Key 鉴权）解耦，避免后台页面被迫注入 X-API-Key。
 			// 路径用 /admin/images 而非 /images，后者已被 APIKeyAuth 组占用，重复注册会冲突。
-			protected.GET("/admin/images", imageAPI.ListAdmin)
-			protected.POST("/admin/images", imageAPI.CreateAdmin)
+			// 批量删除为敏感操作（物理删文件不可恢复），组上强制 HTTPS（生产由配置开启），
+			// handler 内部还会校验请求体携带的账号密码做二次确认，与 /apikeys、/admin/logs 同款防护。
+			adminImages := protected.Group("/admin/images", middleware.HTTPSOnly(cfg.APIKey.HTTPSOnly, trustedProxies))
+			{
+				adminImages.GET("", imageAPI.ListAdmin)
+				adminImages.POST("", imageAPI.CreateAdmin)
+				adminImages.DELETE("", imageAPI.BatchDeleteAdmin)
+			}
 
 			// 日志中心接口：受 JWT 保护 + 强制 HTTPS（生产由配置开启）。
 			// 清理日志为敏感操作，handler 内部还会校验请求体携带的账号密码做二次确认。

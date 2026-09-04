@@ -194,6 +194,40 @@ func (d *imageDAO) Delete(ctx context.Context, id int) error {
 	return nil
 }
 
+// ListByIDs 按主键集合批量查询现存的图片记录（不存在的 ID 静默跳过），
+// 供批量删除前取 StoredPath 做物理文件清理。
+// 空切片防御：直接返回空 slice 不发起查询（ent 对空 variadic IN 的行为依版本而定，显式防御更稳）。
+func (d *imageDAO) ListByIDs(ctx context.Context, ids []int) ([]*model.Image, error) {
+	if len(ids) == 0 {
+		return []*model.Image{}, nil
+	}
+	rows, err := d.client.Image.Query().
+		Where(image.IDIn(ids...)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*model.Image, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toModel(row))
+	}
+	return items, nil
+}
+
+// DeleteByIDs 按主键集合批量删除图片记录，返回实际删除条数（不存在的 ID 静默跳过）。
+func (d *imageDAO) DeleteByIDs(ctx context.Context, ids []int) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	n, err := d.client.Image.Delete().
+		Where(image.IDIn(ids...)).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // ListByKeyID 返回指定密钥关联的全部图片（不分页），供删除密钥时级联清理使用。
 func (d *imageDAO) ListByKeyID(ctx context.Context, keyID int) ([]*model.Image, error) {
 	rows, err := d.client.Image.Query().

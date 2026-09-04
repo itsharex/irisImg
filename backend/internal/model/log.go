@@ -14,6 +14,7 @@ const (
 const (
 	EventHTTPRequest   = "http.request"
 	EventImageUpload   = "image.upload"
+	EventImageDelete   = "image.delete"
 	EventAPIKeyCreate  = "apikey.create"
 	EventAPIKeyRename  = "apikey.rename"
 	EventAPIKeyReset   = "apikey.reset"

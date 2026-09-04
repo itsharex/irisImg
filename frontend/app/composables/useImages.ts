@@ -34,15 +34,29 @@ export interface ListImagesParams {
   pageSize?: number
 }
 
+/** 批量删除图片请求体（账号密码二次确认 + 待删除 ID 列表）。 */
+export interface BatchDeleteImagesRequest {
+  username: string
+  password: string
+  ids: number[]
+}
+
+/** 批量删除图片响应：deleted 为实际删除条数，ids 为实际被删除的图片 ID（不存在的 ID 静默跳过）。 */
+export interface BatchDeleteImagesResult {
+  deleted: number
+  ids: number[]
+}
+
 /**
- * useImages 封装内容中心用到的图片列表请求与后台直传上传。
+ * useImages 封装内容中心用到的图片列表请求、后台直传上传与批量删除。
  *
  * - 列表走后台 JWT 通道 GET /admin/images（由 useApi 自动附带 Authorization 头）。
  * - 上传走后台 JWT 通道 POST /admin/images，与对外 /images（API Key 鉴权）解耦；
  *   上传的图片不关联密钥（key_id 留空，即 admin 直传）。
+ * - 批量删除走后台 JWT 通道 DELETE /admin/images，需账号密码二次确认。
  */
 export function useImages() {
-  const { get, post } = useApi()
+  const { get, post, api } = useApi()
 
   async function list(params: ListImagesParams = {}): Promise<ImageListResponse> {
     const query: Record<string, string> = {
@@ -70,7 +84,20 @@ export function useImages() {
     return post<ImageItem>('/admin/images', fd)
   }
 
-  return { list, upload }
+  /**
+   * batchRemove 经后台 JWT 通道批量删除图片（物理文件 + 记录同删，不可恢复）。
+   *
+   * - 走 DELETE /admin/images，body 携带账号密码（后端二次确认）与待删除 ID 列表
+   *   （后端限制非空、每项 > 0、上限 100）。
+   * - 二次确认失败后端返回 403（而非 401），不会触发 useApi 的全局登出，
+   *   调用方可在弹窗内联展示错误并让用户重试。
+   * - 不存在的 ID 静默跳过：返回的 deleted / ids 均为「实际删除」口径。
+   */
+  async function batchRemove(params: BatchDeleteImagesRequest): Promise<BatchDeleteImagesResult> {
+    return api<BatchDeleteImagesResult>('/admin/images', { method: 'DELETE', body: params })
+  }
+
+  return { list, upload, batchRemove }
 }
 
 /**

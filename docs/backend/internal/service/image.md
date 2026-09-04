@@ -1,6 +1,6 @@
 # `internal/service/image.go`
 
-图片上传的业务编排层。控制器把请求字节交过来，本层负责：**大小/MIME 校验 → 算 hash → 去重秒传 → 解析宽高 → 写盘 → 落库**。
+图片上传与批量删除的业务编排层。控制器把请求字节交过来，本层负责：**大小/MIME 校验 → 算 hash → 去重秒传 → 解析宽高 → 写盘 → 落库**；批量删除则编排 **查现存记录 → 逐张删物理文件 → 批量删记录**。
 
 ## 类型与变量
 
@@ -56,6 +56,19 @@ type ImageService struct {
 
 查询图片列表：对 `q.Limit<=0` 兜底为 24，调 [`dao.ImageDAO.List`](../dao/dao.md)，组装 `model.ImageListResult{Items, Total}` 返回。过滤（key_id）与排序方向由 dao 层落实，service 只做参数兜底与结果组装。
 
+### `(s *ImageService) BatchDelete(ctx, ids []int) (deleted int, ids []int, err error)`
+
+批量删除图片，供 [`api.ImageAPI.BatchDeleteAdmin`](../api/image.md) 调用。返回 `(实际删除条数, 实际删除的图片 ID 列表, error)`；**不存在的 ID 静默跳过（幂等语义）**，不构成错误。
+
+主流程：
+
+1. `len(ids) == 0` 直接返回 `(0, nil, nil)`（service 层兜底，不依赖 api 层 binding 校验）。
+2. `dao.ListByIDs(ctx, ids)` 取**现存**记录（删物理文件必须先拿到 `StoredPath`），混入的不存在 ID 天然被过滤。
+3. 逐张 best-effort 删物理文件：`_ = s.saver.Delete(img.StoredPath)`，失败不阻断（[`Saver.Delete`](../pkg/storage.md) 幂等，文件不存在返回 nil）。
+4. `dao.DeleteByIDs(ctx, ids)` 一条 `IN` SQL 批量删记录，返回实际删除条数。
+
+**非事务**（低频管理操作，与 `APIKeyService.Delete` 同款权衡）：若第 4 步失败，个别物理文件已删但记录仍在，该图缩略图 404，管理员重删时幂等兜底。结构对称于删除密钥时的级联清理（先 `ListByKeyID` 后 `DeleteByKeyID`）。
+
 ### `decodeImageSize` / `extFromMime`
 
 未导出辅助函数：
@@ -73,8 +86,8 @@ type ImageService struct {
 
 ```
 api.ImageAPI ──► service.ImageService
-                     ├─► dao.ImageDAO       (GetByHash / Create)
-                     └─► pkg/storage.Saver  (Save / PublicURL)
+                     ├─► dao.ImageDAO       (GetByHash / Create / List / ListByIDs / DeleteByIDs)
+                     └─► pkg/storage.Saver  (Save / PublicURL / Delete)
 ```
 
 ## 修改建议

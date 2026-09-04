@@ -14,6 +14,8 @@
 | `List(ctx, q model.ImageListQuery) ([]*model.Image, int, error)` | 按 `ImageListQuery` 过滤（可选 key_id）/ 排序（asc/desc）/ 分页，返回条目与符合过滤条件的总数 |
 | `ListByKeyID(ctx, keyID int) ([]*model.Image, error)` | 返回指定密钥关联的全部图片（不分页），供删除密钥时级联清理使用 |
 | `Delete(ctx, id int) error` | 按主键删除，未找到返回 `ErrNotFound` |
+| `ListByIDs(ctx, ids []int) ([]*model.Image, error)` | 按主键集合批量查询**现存**记录（不存在的 ID 静默跳过），供批量删除前取 `StoredPath` 做物理文件清理 |
+| `DeleteByIDs(ctx, ids []int) (int, error)` | 按主键集合批量删除记录，返回实际删除条数（不存在的 ID 静默跳过），供内容中心批量删除使用 |
 | `DeleteByKeyID(ctx, keyID int) (int, error)` | 批量删除指定密钥关联的全部图片记录，返回删除条数 |
 | `Count(ctx) (int64, error)` | 图片总量（无过滤），供仪表盘统计 |
 | `TotalSize(ctx) (int64, error)` | 全部图片 `size` 之和（字节）；空表 SUM 返回 NULL，兜底为 0 |

@@ -15,6 +15,7 @@
 - **真实 MIME 嗅探**（`http.DetectContentType`）+ 白名单，不信任客户端 `Content-Type`，扩展名由后端推导。
 - **对外访问 URL** 由配置 `storage.public_base_url` + 相对路径拼接：空 → `/imgs/...`（前端/Nginx 同域反代）；填了如 `https://img.example.com` → 绝对地址。
 - 元数据落库 `images` 表（含 `key_id`），记录是哪把密钥添加的图片，便于审计与后续按密钥维度展示。
+- **删除**：`DELETE /admin/images`（JWT + HTTPSOnly + 账号密码二次确认）批量删除，物理文件与记录同删；不存在的 ID 静默跳过（幂等），删除时记录 `image.delete`（warn）业务事件。
 
 参与的代码文件：
 
@@ -23,7 +24,7 @@
 | Schema | `ent/schema/image.go` |
 | 配置 | `config/config.go`、`config/config.yaml`（`storage` 段） |
 | 存储工具 | `internal/pkg/storage/storage.go` |
-| DTO | `internal/model/image.go`（`Image` / `UploadImageInput`） |
+| DTO | `internal/model/image.go`（`Image` / `UploadImageInput` / `BatchDeleteImagesRequest` / `BatchDeleteImagesResponse`） |
 | DAO | `internal/dao/dao.go`、`internal/dao/entdao/image.go` |
 | 业务逻辑 | `internal/service/image.go` |
 | 中间件 | `internal/middleware/apikey.go`（鉴权 + 限流，已存在） |
@@ -91,6 +92,24 @@ storage:
 | 500 | `CodeServerError` | 落盘 / 落库失败等内部错误 |
 
 > 业务流程（嗅探 → sha256 秒传 → 落盘 → 落库）与 `POST /images` 完全一致，复用 `service.ImageService.Upload`，差别仅在 `KeyID` 传 `nil`。详见 [`internal/api/image.md`](./internal/api/image.md) 的 `CreateAdmin`。
+
+### `DELETE /api/v1/admin/images` —— 批量删除图片
+
+- **鉴权**：`Authorization: Bearer <JWT>` + [`HTTPSOnly`](./internal/middleware/https.md)（生产环境由 `apikey.https_only` 开启）。供内容中心多选删除，物理文件与记录同删，不可恢复。
+- **请求体**：JSON，`{ username, password, ids: []int }`。账号密码为二次确认（与吊销 / 删除密钥、清理日志同款机制），失败返回 **403** 而非 401，不触发前端全局登出；`ids` 非空、每项 > 0、上限 100。
+- **成功响应**：`200` + `data` 为 `{ deleted: 实际删除条数, ids: 实际被删除的图片 ID 列表 }`。**不存在的 ID 静默跳过**（幂等语义），全部不存在时返回 `deleted: 0`。
+- **删除顺序**：`ListByIDs` 取现存记录 → 逐张 best-effort 删物理文件（失败不阻断，`Saver.Delete` 幂等）→ `DeleteByIDs` 一条 SQL 批量删记录。非事务（低频管理操作）；若删库失败个别文件已删，记录仍在，重删时幂等兜底。
+- **审计**：删除成功记录 `image.delete`（warn）业务事件，消息为 `batch delete images: N`。
+- **错误**：
+
+| HTTP | 业务码 | 场景 |
+| --- | --- | --- |
+| 400 | `CodeBadRequest` | body 解析失败 / `ids` 为空 / 超过 100 / 含非正数 |
+| 401 | `CodeUnauthorized` | 未登录 / JWT 失效（由中间件返回） |
+| 403 | `CodeForbidden` | 账号密码二次确认失败（或生产环境 HTTPSOnly 拦截非 HTTPS 请求） |
+| 500 | `CodeServerError` | 查询 / 删除失败等内部错误 |
+
+详见 [`internal/api/image.md`](./internal/api/image.md) 的 `BatchDeleteAdmin` 与 [`internal/service/image.md`](./internal/service/image.md) 的 `BatchDelete`。
 
 ### `GET /api/v1/images` —— 申请图片（占位）
 

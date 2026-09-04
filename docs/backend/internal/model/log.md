@@ -23,6 +23,7 @@ const (
 const (
     EventHTTPRequest   = "http.request"        // 每条 HTTP 请求（访问日志，由中间件批量落库）
     EventImageUpload   = "image.upload"        // 图片上传
+    EventImageDelete   = "image.delete"        // 批量删除图片（warn）
     EventAPIKeyCreate  = "apikey.create"       // 密钥创建
     EventAPIKeyRename  = "apikey.rename"       // 密钥重命名
     EventAPIKeyReset   = "apikey.reset"        // 密钥重置（明文重发）

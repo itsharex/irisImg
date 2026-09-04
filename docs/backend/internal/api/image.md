@@ -5,6 +5,7 @@
 - **`POST /api/v1/images`** -- 对外添加图片，**已实现**，由 [API 密钥鉴权中间件](../middleware/apikey.md) 保护，需 `readwrite` 密钥。
 - **`POST /api/v1/admin/images`** -- 后台直传图片，**已实现**，由 [JWT 鉴权中间件](../middleware/auth.md) 保护，供内容中心上传，`key_id` 留空（admin 直传）。
 - **`GET  /api/v1/admin/images`** -- 后台图片列表，**已实现**，由 [JWT 鉴权中间件](../middleware/auth.md) 保护，供内容中心拉取图片（支持按 `key_id` 过滤、时间升序、分页）。
+- **`DELETE /api/v1/admin/images`** -- 后台批量删除图片，**已实现**，由 [JWT 鉴权中间件](../middleware/auth.md) + [HTTPSOnly](../middleware/https.md) 保护，供内容中心多选删除；请求体需携带账号密码做二次确认。
 - **`GET  /api/v1/images`** -- 对外占位，任意有效密钥可访问，**目前返回 501**，待语义明确后再实现。
 
 ## 类型
@@ -13,12 +14,13 @@
 
 ```go
 type ImageAPI struct {
-    svc *service.ImageService
-    rec service.LogRecorder
+    svc     *service.ImageService
+    authSvc *service.AuthService
+    rec     service.LogRecorder
 }
 ```
 
-由 [`router`](../router/router.md) 通过 `NewImageAPI(svc, rec)` 注入；`rec` 为 `service.LogRecorder`，用于把图片上传业务事件记录到日志中心（`rec` 为 `nil` 时静默跳过，便于测试）。控制器不再直接持有 DAO，便于在 service 层统一编排上传链路。
+由 [`router`](../router/router.md) 通过 `NewImageAPI(svc, authSvc, rec)` 注入；`authSvc` 用于批量删除的账号密码二次确认；`rec` 为 `service.LogRecorder`，用于把图片上传 / 删除业务事件记录到日志中心（`rec` 为 `nil` 时静默跳过，便于测试）。控制器不再直接持有 DAO，便于在 service 层统一编排上传链路。
 
 ## 处理函数
 
@@ -76,9 +78,41 @@ type ImageAPI struct {
 
 **与 `Create` 的差别**：仅在不走 API Key 通道、`KeyID` 传 `nil`。业务流程（嗅探 -> 秒传 -> 落盘 -> 落库）完全一致，复用 `svc.Upload`；上传成功后同样调 `recordUpload(c, filename)` 记录 `model.EventImageUpload`（`LevelInfo`）业务事件。这类图片只会在内容中心「全部」里出现，详情里来源展示为 `admin`。
 
+### `BatchDeleteAdmin(c *gin.Context)` -- `DELETE /api/v1/admin/images`
+
+后台批量删除图片（物理文件 + 元信息记录同删，不可恢复），供内容中心多选删除使用。由 [JWT 鉴权中间件](../middleware/auth.md) + [`HTTPSOnly`](../middleware/https.md)（生产环境由 `apikey.https_only` 开启）保护。
+
+**请求**：JSON body（`model.BatchDeleteImagesRequest`）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `username` | string | 账号（二次确认，必填） |
+| `password` | string | 密码（二次确认，必填） |
+| `ids` | []int | 待删除的图片 ID 列表：非空、每项 > 0、上限 100 |
+
+**响应**：200 + `{ deleted: 实际删除条数, ids: 实际被删除的图片 ID 列表 }`。不存在的 ID 静默跳过（幂等语义），不构成错误。
+
+**错误映射**：
+
+| HTTP | 业务码 | 触发 |
+| --- | --- | --- |
+| 400 | `CodeBadRequest` | body 解析失败 / `ids` 为空 / 超过 100 / 含非正数 |
+| 401 | `CodeUnauthorized` | 未登录 / JWT 失效（由中间件返回） |
+| 403 | `CodeForbidden` | 账号密码二次确认失败（或生产环境 HTTPSOnly 拦截非 HTTPS 请求） |
+| 500 | `CodeServerError` | 查询 / 删除失败等内部错误 |
+
+**关键实现**：
+
+1. 与吊销 / 删除密钥（[`api/apikey.md`](apikey.md)）同款二次确认：`authSvc.VerifyCredentials` 常量时间比对，失败返回 **403 而非 401**，避免触发前端 `useApi` 的全局登出。
+2. 校验通过后调 `svc.BatchDelete(ctx, req.IDs)`（见 [`service/image.md`](../service/image.md)），删除成功后调 `recordDelete(c, deleted)` 记录 `model.EventImageDelete`（`model.LevelWarn`）业务事件。
+
 ### `recordUpload(c *gin.Context, filename string)` -- 辅助方法
 
 上传成功业务事件的统一记录入口。`rec` 为 `nil` 时直接返回；否则调 `rec.Record(model.NewEventLog(model.EventImageUpload, model.LevelInfo, "upload image: "+filename, middleware.LogContextFromGin(c)))`，把请求上下文（操作者 / 来源 IP 等）一并带入日志。`Create` 与 `CreateAdmin` 在 `svc.Upload` 成功后调用。
+
+### `recordDelete(c *gin.Context, count int)` -- 辅助方法
+
+批量删除业务事件的统一记录入口。`rec` 为 `nil` 时直接返回；否则调 `rec.Record(model.NewEventLog(model.EventImageDelete, model.LevelWarn, fmt.Sprintf("batch delete images: %d", count), middleware.LogContextFromGin(c)))`。删除属破坏性操作，级别用 `warn`（对照 apikey 的 revoke/delete 事件）。`BatchDeleteAdmin` 在 `svc.BatchDelete` 成功后调用。
 
 ### `List(c *gin.Context)` -- `GET /api/v1/images`（占位）
 
@@ -117,10 +151,16 @@ images 组 ── APIKeyAuth ──► ImageAPI.Create ──► ImageService.Up
                                               ├─ c.GetInt(ContextKeyAPIKeyID) -> model.UploadImageInput.KeyID
                                               └─ recordUpload -> rec.Record(EventImageUpload, LevelInfo, filename)
 
-admin/images 组 ── JWTAuth ──► ImageAPI.CreateAdmin ──► ImageService.Upload ──► dao.ImageDAO + pkg/storage.Saver
+admin/images 组 ── JWTAuth + HTTPSOnly ──► ImageAPI.CreateAdmin ──► ImageService.Upload ──► dao.ImageDAO + pkg/storage.Saver
                                                      │
                                                      ├─ KeyID = nil（admin 直传）
                                                      └─ recordUpload -> rec.Record(EventImageUpload, LevelInfo, filename)
+
+admin/images 组 ── JWTAuth + HTTPSOnly ──► ImageAPI.BatchDeleteAdmin
+                                                     │
+                                                     ├─ authSvc.VerifyCredentials（403 on fail，不触发前端登出）
+                                                     ├─ ImageService.BatchDelete ──► dao.ListByIDs + saver.Delete + dao.DeleteByIDs
+                                                     └─ recordDelete -> rec.Record(EventImageDelete, LevelWarn, "batch delete images: N")
 ```
 
 ## 注意

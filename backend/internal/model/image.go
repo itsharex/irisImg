@@ -55,3 +55,24 @@ type ImageListResult struct {
 	Items []*Image `json:"items"`
 	Total int      `json:"total"`
 }
+
+// BatchDeleteImagesRequest 是内容中心批量删除图片的请求体。
+// 复用吊销/删除密钥同款账号密码二次确认机制：api 层用 AuthService.VerifyCredentials
+// 常量时间比对校验，失败返回 403（而非 401），避免触发前端全局登出。
+// IDs 上限 100，防止误操作一次删除巨量图片。
+type BatchDeleteImagesRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	// IDs 是待删除的图片主键列表：非空、每项 > 0、上限 100。
+	IDs []int `json:"ids" binding:"required,min=1,max=100,dive,gt=0"`
+}
+
+// BatchDeleteImagesResponse 是批量删除图片的响应体。
+// 不存在的 ID 静默跳过（幂等语义），两个均按「实际删除」口径返回，
+// 供前端同步本地列表状态与分页计算。
+type BatchDeleteImagesResponse struct {
+	// Deleted 是实际删除的记录条数（不存在的 ID 不计入）。
+	Deleted int `json:"deleted"`
+	// IDs 是实际被删除的图片 ID 列表。
+	IDs []int `json:"ids"`
+}

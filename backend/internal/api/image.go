@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -19,16 +20,20 @@ import (
 //   - POST /images（对外添加图片）：由 API Key 鉴权中间件保护，只读密钥访问 POST 会被 403。
 //   - POST /api/v1/admin/images（后台直传）：由 JWT 鉴权中间件保护，供内容中心上传，key_id 留空。
 //   - GET /api/v1/admin/images（后台列表）：由 JWT 鉴权中间件保护，供内容中心拉取图片。
+//   - DELETE /api/v1/admin/images（后台批量删除）：由 JWT 鉴权中间件保护，供内容中心批量删除，
+//     需请求体携带账号密码做二次确认。
 //
 // GET /images（对外，API Key）暂为占位，待语义明确后再实现。
 type ImageAPI struct {
-	svc *service.ImageService
-	rec service.LogRecorder
+	svc     *service.ImageService
+	authSvc *service.AuthService
+	rec     service.LogRecorder
 }
 
-// NewImageAPI 通过依赖注入构造控制器。rec 用于记录图片上传业务事件到日志中心。
-func NewImageAPI(svc *service.ImageService, rec service.LogRecorder) *ImageAPI {
-	return &ImageAPI{svc: svc, rec: rec}
+// NewImageAPI 通过依赖注入构造控制器。authSvc 用于批量删除的账号密码二次确认；
+// rec 用于记录图片上传 / 删除业务事件到日志中心。
+func NewImageAPI(svc *service.ImageService, authSvc *service.AuthService, rec service.LogRecorder) *ImageAPI {
+	return &ImageAPI{svc: svc, authSvc: authSvc, rec: rec}
 }
 
 // recordUpload 记录一次图片上传业务事件。rec 为空时直接返回，便于测试。
@@ -37,6 +42,15 @@ func (h *ImageAPI) recordUpload(c *gin.Context, filename string) {
 		return
 	}
 	h.rec.Record(model.NewEventLog(model.EventImageUpload, model.LevelInfo, "upload image: "+filename, middleware.LogContextFromGin(c)))
+}
+
+// recordDelete 记录一次批量删除图片业务事件（破坏性操作，级别 warn）。rec 为空时直接返回，便于测试。
+func (h *ImageAPI) recordDelete(c *gin.Context, count int) {
+	if h.rec == nil {
+		return
+	}
+	h.rec.Record(model.NewEventLog(model.EventImageDelete, model.LevelWarn,
+		fmt.Sprintf("batch delete images: %d", count), middleware.LogContextFromGin(c)))
 }
 
 // uploadFormField 是上传字段名，固定为 "file"。
@@ -158,6 +172,40 @@ func (h *ImageAPI) CreateAdmin(c *gin.Context) {
 	}
 	h.recordUpload(c, filename)
 	response.Success(c, img)
+}
+
+// BatchDeleteAdmin 处理 DELETE /api/v1/admin/images，批量删除图片（物理文件 + 元信息记录）。
+// 供内容中心多选删除使用。
+//
+//	请求：JSON body，含账号密码（二次确认）与待删除 ID 列表（非空、每项 >0、上限 100）。
+//	响应：200 + { deleted: 实际删除条数, ids: 实际被删除的图片 ID 列表 }。
+//
+// 与吊销 / 删除密钥同款二次确认：VerifyCredentials 失败返回 403（而非 401），
+// 避免触发前端全局登出。不存在的 ID 静默跳过（幂等语义），不构成错误。
+//
+// 错误：
+//   - 400 body 解析失败 / ids 为空 / 超过 100 / 含非正数
+//   - 401 JWT 缺失或失效（由中间件返回）
+//   - 403 账号密码二次确认失败（或生产环境 HTTPSOnly 拦截）
+//   - 500 其它内部错误
+func (h *ImageAPI) BatchDeleteAdmin(c *gin.Context) {
+	var req model.BatchDeleteImagesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.authSvc.VerifyCredentials(req.Username, req.Password); err != nil {
+		response.Forbidden(c, "用户名或密码错误")
+		return
+	}
+
+	deleted, ids, err := h.svc.BatchDelete(c.Request.Context(), req.IDs)
+	if err != nil {
+		response.ServerError(c, "批量删除图片失败："+err.Error())
+		return
+	}
+	h.recordDelete(c, deleted)
+	response.Success(c, model.BatchDeleteImagesResponse{Deleted: deleted, IDs: ids})
 }
 
 // readUploadFile 从 multipart 请求里读取 "file" 字段的完整字节，统一处理超大与缺字段错误。

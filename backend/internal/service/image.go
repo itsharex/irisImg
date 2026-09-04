@@ -154,6 +154,44 @@ func (s *ImageService) List(ctx context.Context, q model.ImageListQuery) (*model
 	return &model.ImageListResult{Items: items, Total: total}, nil
 }
 
+// BatchDelete 批量删除图片：物理文件 best-effort 删除 + 元信息记录批量删除。
+// 返回 (实际删除条数, 实际删除的图片 ID 列表)；不存在的 ID 静默跳过（幂等语义）。
+//
+// 顺序：ListByIDs 取现存记录 → 逐张 best-effort 删物理文件（失败不阻断，Saver.Delete 幂等）
+// → DeleteByIDs 一条 SQL 批量删记录。非事务（低频管理操作，与 APIKeyService.Delete 同款权衡）：
+// 若删 DB 失败，个别物理文件已删但记录仍在，该图缩略图 404，管理员重删时幂等兜底。
+func (s *ImageService) BatchDelete(ctx context.Context, ids []int) (int, []int, error) {
+	if len(ids) == 0 {
+		return 0, nil, nil
+	}
+
+	// 只删现存的记录：混入的不存在 ID 直接跳过，不构成错误。
+	items, err := s.dao.ListByIDs(ctx, ids)
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(items) == 0 {
+		return 0, []int{}, nil
+	}
+
+	// 先逐张删物理文件（best-effort）：失败不阻断，避免个别文件权限等问题
+	// 卡住整批删除；Saver.Delete 对已不存在的文件返回 nil，天然幂等。
+	for _, img := range items {
+		_ = s.saver.Delete(img.StoredPath)
+	}
+
+	deleted, err := s.dao.DeleteByIDs(ctx, ids)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	deletedIDs := make([]int, 0, len(items))
+	for _, img := range items {
+		deletedIDs = append(deletedIDs, img.ID)
+	}
+	return deleted, deletedIDs, nil
+}
+
 // decodeImageSize 通过标准库 image.DecodeConfig 读宽高，未注册的格式或解析失败均返回 0,0。
 func decodeImageSize(content []byte) (int, int) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(content))

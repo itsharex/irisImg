@@ -36,3 +36,17 @@
 | `Limit` | int | 每页条数；<=0 时由 service 兜底为 24 |
 
 `ImageListResult`：`Items []*Image` + `Total int`（符合过滤条件的总数，用于前端计算总页数）。
+
+## 类型：BatchDeleteImagesRequest / BatchDeleteImagesResponse
+
+「批量删除图片」的请求 / 响应 DTO，供后台内容中心 `DELETE /api/v1/admin/images` 使用（见 [`api/image.md`](../api/image.md)）。
+
+`BatchDeleteImagesRequest`（复用吊销 / 删除密钥同款账号密码二次确认机制）：
+
+| 字段 | 类型 | binding | 说明 |
+| --- | --- | --- | --- |
+| `Username` | string | `required` | 账号，api 层经 `AuthService.VerifyCredentials` 常量时间比对校验，失败返回 403（而非 401，避免触发前端全局登出） |
+| `Password` | string | `required` | 密码 |
+| `IDs` | []int | `required,min=1,max=100,dive,gt=0` | 待删除的图片主键列表：非空、每项 > 0、上限 100（防误操作巨量删除） |
+
+`BatchDeleteImagesResponse`：`Deleted int`（实际删除条数）+ `IDs []int`（实际被删除的图片 ID 列表）。**不存在的 ID 静默跳过（幂等语义）**，两个口径均按「实际删除」返回，供前端同步本地列表与分页计算。

@@ -6,26 +6,73 @@
         <h1 class="text-2xl font-bold text-gray-900">内容中心</h1>
         <p class="mt-1 text-sm text-gray-500">管理已上传的图片资源</p>
       </div>
-      <button
-        type="button"
-        class="inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition"
-        :class="
-          showUpload
-            ? 'bg-iris-violet text-white shadow-sm'
-            : 'bg-iris-violet/10 text-iris-dark hover:bg-iris-violet/15'
-        "
-        @click="showUpload = !showUpload"
-      >
-        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="1.5"
-            d="M12 4v12m0-12l-4 4m4-4l4 4M4 20h16"
-          />
-        </svg>
-        上传图片
-      </button>
+      <div class="flex shrink-0 items-center gap-2">
+        <!-- 多选模式操作栏：删除（危险色，空选中禁用）+ 取消退出 -->
+        <template v-if="multiSelect">
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="!selectedIds.length"
+            @click="showDeleteConfirm = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+            删除{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+            @click="exitMultiSelect"
+          >
+            取消
+          </button>
+        </template>
+        <!-- 默认态：多选入口 + 上传图片 -->
+        <template v-else>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-iris-violet/10 px-3 py-2 text-sm font-medium text-iris-dark transition hover:bg-iris-violet/15"
+            @click="enterMultiSelect"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M8.25 3h7.5A5.25 5.25 0 0121 8.25v7.5A5.25 5.25 0 0115.75 21h-7.5A5.25 5.25 0 013 15.75v-7.5A5.25 5.25 0 018.25 3z"
+              />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75l2.25 2.25L15 9.75" />
+            </svg>
+            多选
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition"
+            :class="
+              showUpload
+                ? 'bg-iris-violet text-white shadow-sm'
+                : 'bg-iris-violet/10 text-iris-dark hover:bg-iris-violet/15'
+            "
+            @click="showUpload = !showUpload"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M12 4v12m0-12l-4 4m4-4l4 4M4 20h16"
+              />
+            </svg>
+            上传图片
+          </button>
+        </template>
+      </div>
     </div>
 
     <!-- 上传栏：JWT 后台直传，不关联密钥；上传的图只出现在「全部」里 -->
@@ -82,6 +129,7 @@
           <p class="text-sm text-gray-500">
             共 <span class="font-medium text-gray-700">{{ total }}</span> 张
             <span v-if="selectedKeyId !== null">· 已按 Key 筛选</span>
+            <span v-if="multiSelect && selectedIds.length" class="text-iris-dark">· 已选 {{ selectedIds.length }} 张</span>
           </p>
           <div class="flex items-center gap-2">
             <button
@@ -137,7 +185,14 @@
 
         <!-- 图片网格 -->
         <div v-else class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-          <ContentImageCard v-for="img in images" :key="img.id" :image="img" @click="openDetail" />
+          <ContentImageCard
+            v-for="img in images"
+            :key="img.id"
+            :image="img"
+            :selectable="multiSelect"
+            :selected="selectedIds.includes(img.id)"
+            @click="onCardClick"
+          />
         </div>
       </div>
     </div>
@@ -148,11 +203,14 @@
       :key-name="selectedKeyName"
       @close="closeDetail"
     />
+
+    <!-- 批量删除确认弹窗（账号密码二次确认） -->
+    <ContentBatchDeleteDialog :open="showDeleteConfirm" :ids="selectedIds" @close="showDeleteConfirm = false" @done="onDeleted" />
   </div>
 </template>
 
 <script setup lang="ts">
-import type { ImageItem } from '~/composables/useImages'
+import type { BatchDeleteImagesResult, ImageItem } from '~/composables/useImages'
 
 definePageMeta({ middleware: 'auth' })
 
@@ -182,6 +240,13 @@ const selectedImage = ref<ImageItem | null>(null)
 
 // 上传栏显隐
 const showUpload = ref(false)
+
+// 多选模式状态
+const multiSelect = ref(false)
+// 选中的图片 ID（跨页累计；切换 Key 筛选会退出多选并清空）
+const selectedIds = ref<number[]>([])
+// 批量删除确认弹窗显隐
+const showDeleteConfirm = ref(false)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
@@ -237,6 +302,8 @@ function selectKey(id: number | null) {
   if (selectedKeyId.value === id) return
   selectedKeyId.value = id
   page.value = 1
+  // 跨筛选维度保留选中违背直觉、误删风险高，直接退出多选。
+  if (multiSelect.value) exitMultiSelect()
   fetchImages()
 }
 
@@ -252,6 +319,44 @@ function openDetail(img: ImageItem) {
 
 function closeDetail() {
   selectedImage.value = null
+}
+
+// 进入多选模式：清空选中并收起上传面板，避免两种模式叠屏。
+function enterMultiSelect() {
+  multiSelect.value = true
+  selectedIds.value = []
+  showUpload.value = false
+}
+
+// 退出多选模式：清空选中与确认弹窗。
+function exitMultiSelect() {
+  multiSelect.value = false
+  selectedIds.value = []
+  showDeleteConfirm.value = false
+}
+
+// 卡片点击语义分叉：多选模式切换选中（不打开详情），默认模式打开详情弹窗。
+function onCardClick(img: ImageItem) {
+  if (multiSelect.value) toggleSelect(img)
+  else openDetail(img)
+}
+
+// 切换一张图的选中状态：再点一次取消选中。
+function toggleSelect(img: ImageItem) {
+  const i = selectedIds.value.indexOf(img.id)
+  if (i >= 0) selectedIds.value.splice(i, 1)
+  else selectedIds.value.push(img.id)
+}
+
+// 批量删除完成：清空选中、按删除后的总数收敛页码（当前页被删空时回退）再刷新。
+// 保留多选模式，便于连续分批删除；点「取消」才退出。
+async function onDeleted(result: BatchDeleteImagesResult) {
+  showDeleteConfirm.value = false
+  selectedIds.value = []
+  const remaining = total.value - result.deleted
+  const maxPage = Math.max(1, Math.ceil(remaining / PAGE_SIZE))
+  if (page.value > maxPage) page.value = maxPage
+  await fetchImages()
 }
 
 // 上传成功后刷新列表。admin 直传的图 key_id 为空，只在不按密钥过滤时可见：

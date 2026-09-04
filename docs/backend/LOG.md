@@ -9,7 +9,7 @@
 ## 1. 整体设计
 
 - **zap 强类型内核**：访问日志与运行时日志统一走 [`internal/pkg/logger`](./internal/pkg/logger.md) 包装的 `*zap.Logger`，用类型化 `zap.Field` 构造器（`zap.String/Int/Duration/Error`）避免 `interface{}` 装箱，输出到 stdout / 文件供运维采集。
-- **统一落 `logs` 表**：访问日志（`event=http.request`）与业务事件（`event=image.upload` / `apikey.*` / `auth.*` / `log.clear` / `panic`）写入同一张表，按 `event` 区分；HTTP 字段（method/path/status/duration_ms）仅访问日志有值，其余为 NULL。
+- **统一落 `logs` 表**：访问日志（`event=http.request`）与业务事件（`event=image.upload` / `event=image.delete` / `apikey.*` / `auth.*` / `log.clear` / `panic`）写入同一张表，按 `event` 区分；HTTP 字段（method/path/status/duration_ms）仅访问日志有值，其余为 NULL。
 - **异步批量写入**：[`service.LogService`](./internal/service/log.md) 持有容量 2048 的缓冲通道，`Record` 非阻塞推入；后台 flusher 协程攒满 200 条或满 1 秒调 `dao.BatchCreate` 一次性落库，使请求处理零 DB 写延迟。
 - **request id 串联**：[`middleware.RequestID`](./internal/middleware/requestid.md) 为每个请求生成 / 透传 `X-Request-Id`，写入 `gin.Context` 与 `c.Request.Context()`；同一请求的访问日志、业务事件、panic 经 `request_id` 关联。
 - **日志中心查询**：后台 JWT 登录后可分页 + 多维过滤查询、看 14 天每日直方图；清理为敏感操作，需账号密码二次确认。
@@ -111,7 +111,7 @@ LogService.buf(容量2048)      flusher 协程                   dao.LogDAO.Batc
 | --- | --- | --- |
 | `middleware.Logger` | `LogService.Record` | 每个非 ping 请求结束后（`http.request`） |
 | `middleware.Recovery` | `LogService.Record` | 捕获到 panic 时（`panic`） |
-| `api.LogAPI` / `api.AuthAPI` / `api.APIKeyAPI` / `api.ImageAPI` | `LogService.Record` | 业务事件发生时（`auth.*` / `apikey.*` / `image.upload` 等） |
+| `api.LogAPI` / `api.AuthAPI` / `api.APIKeyAPI` / `api.ImageAPI` | `LogService.Record` | 业务事件发生时（`auth.*` / `apikey.*` / `image.upload` / `image.delete` 等） |
 | `LogService.flushLoop` | `dao.LogDAO.BatchCreate` | 攒满 200 条 / 满 1 秒 / `flushReq`（ClearAll 同步 flush）/ 关闭时 |
 | `api.LogAPI.List` | `LogService.List` -> `dao.LogDAO.List` | 日志中心分页查询 |
 | `api.LogAPI.Histogram` | `LogService.Histogram` -> `dao.LogDAO.CountByRange` | 直方图按日聚合 |
@@ -148,6 +148,7 @@ LogService.buf(容量2048)      flusher 协程                   dao.LogDAO.Batc
 | `EventHTTPRequest` | `http.request` | `middleware.Logger` |
 | `EventPanic` | `panic` | `middleware.Recovery` |
 | `EventImageUpload` | `image.upload` | `api.ImageAPI` |
+| `EventImageDelete` | `image.delete` | `api.ImageAPI`（批量删除图片，warn） |
 | `EventAPIKeyCreate` | `apikey.create` | `api.APIKeyAPI` |
 | `EventAPIKeyRename` | `apikey.rename` | `api.APIKeyAPI` |
 | `EventAPIKeyReset` | `apikey.reset` | `api.APIKeyAPI` |

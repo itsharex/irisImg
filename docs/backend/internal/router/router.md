@@ -19,7 +19,7 @@
   1. `jwtMgr := jwt.NewManager(cfg.Auth.JWT)`
   2. `authSvc := service.NewAuthService(cfg.Auth, jwtMgr)` -> `authAPI := api.NewAuthAPI(authSvc, logSvc)`
   3. `apiKeySvc := service.NewAPIKeyService(apiKeyDAO, imageDAO, saver)` -> `apiKeyAPI := api.NewAPIKeyAPI(apiKeySvc, authSvc, logSvc)`（`imageDAO`/`saver` 供删除密钥级联清理，`authSvc` 供吊销/删除密码二次确认）
-  4. `imageSvc := service.NewImageService(imageDAO, saver, cfg.Storage)` -> `imageAPI := api.NewImageAPI(imageSvc, logSvc)`
+  4. `imageSvc := service.NewImageService(imageDAO, saver, cfg.Storage)` -> `imageAPI := api.NewImageAPI(imageSvc, authSvc, logSvc)`（`authSvc` 供批量删除的账号密码二次确认）
   5. `logSvc := service.NewLogService(logDAO, lg)`（先于中间件链与各 API 构造，Logger/Recovery 中间件需要它异步落库）-> `logAPI := api.NewLogAPI(logSvc, authSvc)`（`authSvc` 供清理日志的密码二次确认）
   6. `systemSvc := service.NewSystemService(cfg)` -> `systemAPI := api.NewSystemAPI(systemSvc)`（只读 config 快照，不依赖 dao / storage / logger，handler 不记业务事件）
   7. `dashboardSvc := service.NewDashboardService(imageDAO, apiKeyDAO, logDAO)` -> `dashboardAPI := api.NewDashboardAPI(dashboardSvc)`（只读聚合统计，复用三个已注入的 DAO，不记业务事件；端到端见 [`DASHBOARD.md`](../../DASHBOARD.md)）
@@ -27,7 +27,7 @@
 - `logSvc` 同时作为 **LogRecorder** 注入到 `authAPI` / `apiKeyAPI` / `imageAPI`，使这些 handler 能在登录、密钥增删改、图片上传等业务节点发射结构化业务事件，统一由 `logSvc` 异步落库。
 - **路由注册**：所有业务接口挂在 `/api/v1` 下。
   - 公开：`GET /ping`、`POST /auth/login`
-  - 受保护（`middleware.JWTAuth(jwtMgr)`）：`GET /auth/me`、`GET /admin/images`（后台图片列表）、`POST /admin/images`（后台直传上传，`key_id` 留空），均供内容中心；其下再套 `keys := protected.Group("/apikeys", middleware.HTTPSOnly(cfg.APIKey.HTTPSOnly, trustedProxies))` 挂密钥管理接口（**JWT + HTTPS** 双重保护），其中吊销（`POST /:id/revoke`）与删除（`DELETE /:id`）为敏感操作，handler 内部还会校验请求体携带的账号密码做二次确认；再套 `logs := protected.Group("/admin/logs", middleware.HTTPSOnly(cfg.APIKey.HTTPSOnly, trustedProxies))` 挂日志中心接口（**JWT + HTTPS** 双重保护），其中清理（`DELETE ""`）为敏感操作，handler 内部同样校验账号密码做二次确认。`GET /system/config` 同样挂在 protected 下（**仅 JWT**，未套 HTTPSOnly），返回当前 config 的非敏感只读快照（auth 段不暴露）。`GET /admin/dashboard` 同样挂在 protected 下（**仅 JWT**，未套 HTTPSOnly），一次性返回仪表盘聚合统计（图片总量 / 存储占用 / APIkey 计数 / 日志总量 / 近 N 天上传趋势，见 [`DASHBOARD.md`](../../DASHBOARD.md)）。`/admin/images` 与对外 `/images`（API Key 鉴权）路径不同，避免同方法同路径重复注册冲突。
+  - 受保护（`middleware.JWTAuth(jwtMgr)`）：`GET /auth/me`；再套 `adminImages := protected.Group("/admin/images", middleware.HTTPSOnly(cfg.APIKey.HTTPSOnly, trustedProxies))` 挂后台图片接口（**JWT + HTTPS** 双重保护）供内容中心：`GET ""`（图片列表）、`POST ""`（后台直传上传，`key_id` 留空）、`DELETE ""`（批量删除，敏感操作，handler 内部校验请求体携带的账号密码做二次确认）；再套 `keys := protected.Group("/apikeys", middleware.HTTPSOnly(cfg.APIKey.HTTPSOnly, trustedProxies))` 挂密钥管理接口（**JWT + HTTPS** 双重保护），其中吊销（`POST /:id/revoke`）与删除（`DELETE /:id`）为敏感操作，handler 内部还会校验请求体携带的账号密码做二次确认；再套 `logs := protected.Group("/admin/logs", middleware.HTTPSOnly(cfg.APIKey.HTTPSOnly, trustedProxies))` 挂日志中心接口（**JWT + HTTPS** 双重保护），其中清理（`DELETE ""`）为敏感操作，handler 内部同样校验账号密码做二次确认。`GET /system/config` 同样挂在 protected 下（**仅 JWT**，未套 HTTPSOnly），返回当前 config 的非敏感只读快照（auth 段不暴露）。`GET /admin/dashboard` 同样挂在 protected 下（**仅 JWT**，未套 HTTPSOnly），一次性返回仪表盘聚合统计（图片总量 / 存储占用 / APIkey 计数 / 日志总量 / 近 N 天上传趋势，见 [`DASHBOARD.md`](../../DASHBOARD.md)）。`/admin/images` 与对外 `/images`（API Key 鉴权）路径不同，避免同方法同路径重复注册冲突。
   - API 密钥保护（`middleware.APIKeyAuth(apiKeySvc, rateStore)`，独立于 JWT）：`images` 组。
 
 ## 路由地图
@@ -41,8 +41,10 @@
 ├── POST /auth/login             公开        AuthAPI.Login
 ├── ── (中间件: JWTAuth)
 │   ├── GET  /auth/me            受保护      AuthAPI.Me
-│   ├── GET  /admin/images       受保护      ImageAPI.ListAdmin
-│   ├── POST /admin/images       受保护      ImageAPI.CreateAdmin (后台直传，key_id=nil)
+│   ├── ── (中间件: HTTPSOnly)   /admin/images
+│   │   ├── GET    ""            JWT+HTTPS   ImageAPI.ListAdmin（内容中心图片列表）
+│   │   ├── POST   ""            JWT+HTTPS   ImageAPI.CreateAdmin (后台直传，key_id=nil)
+│   │   └── DELETE ""            JWT+HTTPS   ImageAPI.BatchDeleteAdmin（批量删除，需密码）
 │   ├── ── (中间件: HTTPSOnly)   /apikeys
 │   │   ├── POST   ""            JWT+HTTPS   APIKeyAPI.Create
 │   │   ├── GET    ""            JWT+HTTPS   APIKeyAPI.List

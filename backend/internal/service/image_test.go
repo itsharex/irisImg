@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,6 +62,30 @@ func (m *memImageDAO) List(_ context.Context, _ model.ImageListQuery) ([]*model.
 
 func (m *memImageDAO) Delete(_ context.Context, _ int) error {
 	return errors.New("not used")
+}
+
+// ListByIDs 按主键集合批量查询现存的图片记录（不存在的 ID 静默跳过，内存实现）。
+func (m *memImageDAO) ListByIDs(_ context.Context, ids []int) ([]*model.Image, error) {
+	items := make([]*model.Image, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := m.byID[id]; ok {
+			items = append(items, v)
+		}
+	}
+	return items, nil
+}
+
+// DeleteByIDs 按主键集合批量删除图片记录，返回实际删除条数（不存在的 ID 静默跳过）。
+func (m *memImageDAO) DeleteByIDs(_ context.Context, ids []int) (int, error) {
+	n := 0
+	for _, id := range ids {
+		if v, ok := m.byID[id]; ok {
+			delete(m.byID, id)
+			delete(m.byHash, v.Hash)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ListByKeyID 返回指定密钥关联的全部图片（内存实现，供删除密钥级联测试使用）。
@@ -173,13 +198,30 @@ func newTestImageService(t *testing.T) (*ImageService, *memImageDAO) {
 // makePNG 生成一张固定 2x2 大小的 PNG，用于 service 测试。
 func makePNG(t *testing.T) []byte {
 	t.Helper()
+	return makeColoredPNG(t, 255, 0, 0)
+}
+
+// makeColoredPNG 生成一张固定 2x2 大小的纯色 PNG；颜色参数用于产出不同 hash 的内容，
+// 避免上传去重（秒传）把多条记录合并成一条。
+func makeColoredPNG(t *testing.T, r, g, b uint8) []byte {
+	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(0, 0, color.RGBA{R: r, G: g, B: b, A: 255})
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// mustUpload 上传一张图并在失败时 Fatal，返回落库后的记录。
+func mustUpload(t *testing.T, svc *ImageService, filename string, content []byte) *model.Image {
+	t.Helper()
+	img, err := svc.Upload(context.Background(), &model.UploadImageInput{Filename: filename, Content: content})
+	if err != nil {
+		t.Fatalf("upload %s: %v", filename, err)
+	}
+	return img
 }
 
 func TestImageService_Upload_Success(t *testing.T) {
@@ -301,6 +343,99 @@ func TestImageService_Upload_Errors(t *testing.T) {
 		})
 		if !errors.Is(err, ErrUnsupportedMime) {
 			t.Fatalf("expected ErrUnsupportedMime, got %v", err)
+		}
+	})
+}
+
+// TestImageService_BatchDelete 覆盖批量删除图片：
+//   - 成功路径：物理文件与记录同删，返回实际条数与 ID 列表；
+//   - 混入不存在的 ID：静默跳过，不构成错误；
+//   - 空列表：直接返回零值；
+//   - 物理文件已丢失：best-effort 不阻断，DB 记录照删。
+func TestImageService_BatchDelete(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success deletes files and records", func(t *testing.T) {
+		svc, mem := newTestImageService(t)
+		a := mustUpload(t, svc, "a.png", makeColoredPNG(t, 255, 0, 0))
+		b := mustUpload(t, svc, "b.png", makeColoredPNG(t, 0, 0, 255))
+
+		deleted, ids, err := svc.BatchDelete(ctx, []int{a.ID, b.ID})
+		if err != nil {
+			t.Fatalf("batch delete: %v", err)
+		}
+		if deleted != 2 {
+			t.Fatalf("expected 2 deleted, got %d", deleted)
+		}
+		if len(ids) != 2 {
+			t.Fatalf("expected 2 ids, got %v", ids)
+		}
+		got := map[int]bool{ids[0]: true, ids[1]: true}
+		if !got[a.ID] || !got[b.ID] {
+			t.Fatalf("expected ids [%d %d], got %v", a.ID, b.ID, ids)
+		}
+		// 物理文件应已删除。
+		for _, img := range []*model.Image{a, b} {
+			abs := filepath.Join(svc.saver.RootDir(), filepath.FromSlash(img.StoredPath))
+			if _, statErr := os.Stat(abs); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("expected physical file to be deleted: %s (statErr=%v)", abs, statErr)
+			}
+		}
+		// DB 记录应已删除。
+		if _, ok := mem.byID[a.ID]; ok {
+			t.Fatalf("expected record %d removed", a.ID)
+		}
+		if _, ok := mem.byID[b.ID]; ok {
+			t.Fatalf("expected record %d removed", b.ID)
+		}
+	})
+
+	t.Run("missing ids are skipped", func(t *testing.T) {
+		svc, mem := newTestImageService(t)
+		a := mustUpload(t, svc, "a.png", makeColoredPNG(t, 255, 0, 0))
+
+		deleted, ids, err := svc.BatchDelete(ctx, []int{a.ID, 99999})
+		if err != nil {
+			t.Fatalf("batch delete: %v", err)
+		}
+		if deleted != 1 {
+			t.Fatalf("expected 1 deleted, got %d", deleted)
+		}
+		if len(ids) != 1 || ids[0] != a.ID {
+			t.Fatalf("expected ids [%d], got %v", a.ID, ids)
+		}
+		if _, ok := mem.byID[a.ID]; ok {
+			t.Fatalf("expected record %d removed", a.ID)
+		}
+	})
+
+	t.Run("empty ids", func(t *testing.T) {
+		svc, _ := newTestImageService(t)
+		deleted, ids, err := svc.BatchDelete(ctx, nil)
+		if err != nil {
+			t.Fatalf("batch delete: %v", err)
+		}
+		if deleted != 0 || ids != nil {
+			t.Fatalf("expected zero result, got deleted=%d ids=%v", deleted, ids)
+		}
+	})
+
+	t.Run("missing physical file still removes record", func(t *testing.T) {
+		svc, mem := newTestImageService(t)
+		a := mustUpload(t, svc, "a.png", makeColoredPNG(t, 255, 0, 0))
+
+		// 手工把 StoredPath 指向不存在的文件，模拟磁盘文件已丢失。
+		mem.byID[a.ID].StoredPath = "2026/09/nonexistent.png"
+
+		deleted, _, err := svc.BatchDelete(ctx, []int{a.ID})
+		if err != nil {
+			t.Fatalf("batch delete: %v", err)
+		}
+		if deleted != 1 {
+			t.Fatalf("expected 1 deleted, got %d", deleted)
+		}
+		if _, ok := mem.byID[a.ID]; ok {
+			t.Fatalf("expected record %d removed despite missing file", a.ID)
 		}
 	})
 }

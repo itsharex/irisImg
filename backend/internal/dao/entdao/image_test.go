@@ -357,6 +357,63 @@ func TestImageDAO_ListAndDeleteByKeyID(t *testing.T) {
 	}
 }
 
+// TestImageDAO_ListAndDeleteByIDs 覆盖按主键集合批量查询与删除（内容中心批量删除）：
+//   - ListByIDs 只返回现存的记录，不存在的 ID 静默跳过；
+//   - DeleteByIDs 删除命中记录并返回计数，不影响其余记录；
+//   - 空 ids 防御：不发起查询也不报错。
+func TestImageDAO_ListAndDeleteByIDs(t *testing.T) {
+	d := newTestDAO(t)
+	ctx := context.Background()
+
+	var ids []int
+	for i := 0; i < 3; i++ {
+		img := sampleImage()
+		img.Hash = "ids-hash-" + string(rune('a'+i))
+		img.StoredPath = "p/" + img.Hash
+		created, err := d.Create(ctx, img)
+		if err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		ids = append(ids, created.ID)
+	}
+
+	// 混入不存在的 ID：只返回现存的 2 条。
+	items, err := d.ListByIDs(ctx, []int{ids[0], ids[1], 99999})
+	if err != nil {
+		t.Fatalf("list by ids: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	got := map[int]bool{}
+	for _, it := range items {
+		got[it.ID] = true
+	}
+	if !got[ids[0]] || !got[ids[1]] {
+		t.Fatalf("expected ids %v, got %v", ids[:2], items)
+	}
+
+	// 删除其中 1 张（混入不存在 ID）：计数为 1，其余不受影响。
+	n, err := d.DeleteByIDs(ctx, []int{ids[0], 99999})
+	if err != nil {
+		t.Fatalf("delete by ids: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 removed, got %d", n)
+	}
+	if left, err := d.ListByIDs(ctx, ids); err != nil || len(left) != 2 {
+		t.Fatalf("expected 2 left, got %d (err %v)", len(left), err)
+	}
+
+	// 空 ids 防御：查询返回空、删除返回 0，均不报错。
+	if empty, err := d.ListByIDs(ctx, nil); err != nil || len(empty) != 0 {
+		t.Fatalf("empty ListByIDs = %v (err %v), want empty", empty, err)
+	}
+	if n, err := d.DeleteByIDs(ctx, nil); err != nil || n != 0 {
+		t.Fatalf("empty DeleteByIDs = %d (err %v), want 0", n, err)
+	}
+}
+
 // TestImageDAO_CountByRangeGrouped 覆盖仪表盘按日按来源聚合：
 //   - admin（nil KeyID）与各 key 分组正确；
 //   - 区间外的记录被排除；
