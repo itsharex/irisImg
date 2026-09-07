@@ -7,7 +7,7 @@
 - 顶部标题 + 副标题（「查看访问与业务日志，支持多维筛选、按日趋势与清理」）。
 - 筛选栏（`grid` 响应式 2/3/4 列）：级别 / 事件 / 方法 / 状态 / 关键字 / 起始日期 / 结束日期 + 「查询」「重置」按钮。
 - 直方图卡片：标题「近 14 天日志量」+ 副文案「共 N 条」，右上角并排两个红色清理按钮——「清理全部日志」（触发 `purgeOpen`，清空全部）与「清理GET日志」（触发 `purgeGetOpen`，仅清 info 级 GET 请求日志），分别打开 [`LogsPurgeDialog`](../../components/logs/LogsPurgeDialog.md) 二次确认弹窗（同一组件，`scope` prop 区分模式）；卡片主体渲染 [`LogsHistogram`](../../components/logs/LogsHistogram.md)，透传 `:error="histError"` 与 `@retry="fetchHistogram"`，与表格一致支持加载 / 错误（重试）/ 空 / 图表四态。
-- 分页日志栏：顶部「共 N 条」+ 上一页 / 下一页（`page / totalPages`），主体为 [`LogsTable`](../../components/logs/LogsTable.md)（四态：加载 / 错误（重试）/ 空 / 表格）。
+- 分页日志栏：顶部「共 N 条」+ [`UiPagination`](../../components/ui/Pagination.md) 页码控件（上一页 / 下一页 + 页码按钮与首末页直达，当前页灰色不可按），主体为 [`LogsTable`](../../components/logs/LogsTable.md)（四态：加载 / 错误（重试）/ 空 / 表格）。
 - 组件按目录前缀自动导入，但因文件名以目录名 `logs` 开头，Nuxt 会去重前缀：`components/logs/LogsHistogram.vue` -> `<LogsHistogram />`、`LogsTable.vue` -> `<LogsTable />`、`LogsPurgeDialog.vue` -> `<LogsPurgeDialog />`（注意不是 `LogsLogs*`）。
 
 ## 鉴权逻辑
@@ -51,7 +51,7 @@
 
 - `onMounted` 并行触发 `fetchHistogram()` 与 `fetchLogs()`（首屏 `page=1`、无筛选）。
 - 筛选栏「查询」走 `onSearch`（回到第 1 页），「重置」走 `onReset`（清空筛选并回到第 1 页）。
-- 分页「上一页 / 下一页」走 `goPage(page ∓ 1)`，受 `loading` 与页码边界双重禁用。
+- 分页走 `UiPagination` 的 `@change` → `goPage(p)`：上一页 / 下一页、页码按钮与首末页直达共用同一入口；`loading` 时组件整体禁用，越界 / 重复页由 `goPage` 守卫拦截。
 - 表格 `@retry` 直接复用 `fetchLogs()` 重拉当前页。
 - 直方图 `@retry` 直接复用 `fetchHistogram()` 重拉趋势；`histError` 非空时直方图进入错误态并显示重试入口。
 - 清理弹窗 `@done` 走 `onPurgedAll` / `onPurgedGet`：弹窗内部完成账号密码二次确认（`DELETE /admin/logs`，`scope` 区分全部 / 仅 info 级 GET）后通知父页刷新直方图与列表。

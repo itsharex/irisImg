@@ -126,25 +126,7 @@
         <p class="text-sm text-gray-500">
           共 <span class="font-medium text-gray-700">{{ total }}</span> 条
         </p>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-            :disabled="loading || page <= 1"
-            @click="goPage(page - 1)"
-          >
-            上一页
-          </button>
-          <span class="text-sm text-gray-500">{{ page }} / {{ totalPages }}</span>
-          <button
-            type="button"
-            class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-            :disabled="loading || page >= totalPages"
-            @click="goPage(page + 1)"
-          >
-            下一页
-          </button>
-        </div>
+        <UiPagination :page="page" :total-pages="totalPages" :loading="loading" @change="goPage" />
       </div>
 
       <LogsTable :logs="logs" :loading="loading" :error="error" @retry="fetchLogs" />
